@@ -1,0 +1,22 @@
+# Downloaded videos
+output/*.mp4
+output/*.ts
+output/*.m3u8
+
+# Temp files
+ts_tmp/
+tmp/
+*.pyc
+__pycache__/
+*.tmp
+
+# Personal data
+cookies/*.json
+!cookies/.gitkeep
+
+# Chrome profile
+tmp/chrome_login/
+
+# OS files
+Thumbs.db
+.DS_Store
