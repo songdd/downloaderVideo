@@ -12,15 +12,18 @@ def parse_url(url):
     m = re.search(r"/id_([a-zA-Z0-9=]+)(\.html)?", url)
     return m.group(1) if m else None
 
-def get_video_info(vid, cookie=None):
+def get_video_info(vid, cookie=None, use_firefox=False):
     try: from playwright.sync_api import sync_playwright
     except ImportError: print("[YOUKU] Playwright not installed."); return None
-    print("[YOUKU] Opening Chrome...")
+    print("[YOUKU] Opening " + ("Firefox" if use_firefox else "Chrome") + "...")
     video_urls, title = [], "youku_" + vid
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, channel="chrome",
-                args=["--no-sandbox","--disable-blink-features=AutomationControlled","--window-size=800,600"])
+            if use_firefox:
+                browser = p.firefox.launch(headless=False)
+            else:
+                browser = p.chromium.launch(headless=False, channel="chrome",
+                    args=["--no-sandbox","--disable-blink-features=AutomationControlled","--window-size=800,600"])
             ctx = browser.new_context(user_agent=H["User-Agent"], viewport={"width":1280,"height":720})
             if cookie:
                 for ck in cookie.split("; "):
@@ -43,7 +46,7 @@ def get_video_info(vid, cookie=None):
                 if btn: btn.click(); page.wait_for_timeout(10000)
             except: pass
             try:
-                js_url = page.evaluate("() => {var v=document.querySelector('video');if(v&&v.src)return v.src;var ss=document.querySelectorAll('script');for(var i=0;i<ss.length;i++){var t=ss[i].textContent||'';var m=t.match(/https?:[^\"'\\s]+\\.m3u8[^\"'\\s]*/);if(m)return m[0]}return null}")
+                js_url = page.evaluate("""() => {var v=document.querySelector('video');if(v&&v.src)return v.src;var ss=document.querySelectorAll('script');for(var i=0;i<ss.length;i++){var t=ss[i].textContent||'';var m=t.match(/https?:[^\"'\\s]+\\.m3u8[^\"'\\s]*/);if(m)return m[0]}return null}""")
                 if js_url: print("[YOUKU] JS found: " + str(js_url)[:120]); video_urls.append((js_url, 0))
             except Exception as e: print("[YOUKU] JS error: " + str(e))
             try: title = page.title().replace("-优酷","").replace("-游戏","").strip()
@@ -53,7 +56,6 @@ def get_video_info(vid, cookie=None):
 
     if not video_urls: print("[YOUKU] No streams"); return None
     print("[YOUKU] Intercepted " + str(len(video_urls)) + " URLs")
-
     m3u8s = [(u,s) for u,s in video_urls if ".m3u8" in u]
     if not m3u8s:
         ts = [(u,s) for u,s in video_urls if ".ts" in u]
@@ -72,10 +74,8 @@ def download_m3u8(m3u8_url, fp, hd=None):
     r = requests.get(m3u8_url, headers=hd, timeout=15)
     if r.status_code != 200: return None
     lines, base = r.text.split("\n"), m3u8_url.rsplit("/",1)[0] + "/"
-    segs = []
-    for l in lines:
-        l = l.strip()
-        if l and not l.startswith("#"): segs.append(l if l.startswith("http") else base + l)
+    segs = [l.strip() for l in lines if l.strip() and not l.startswith("#")]
+    segs = [s if s.startswith("http") else base + s for s in segs]
     if not segs: return None
     print("[YOUKU] " + str(len(segs)) + " TS segments, downloading...")
     tmp = os.path.join(ROOT, "ts_tmp", str(int(time.time()*1000)))
@@ -106,14 +106,11 @@ def download_m3u8(m3u8_url, fp, hd=None):
         rr = subprocess.run([ffmpeg,"-f","concat","-safe","0","-i",cf,"-c","copy",fp,"-y"], capture_output=True, timeout=300)
         if rr.returncode != 0:
             print("[YOUKU] FFmpeg FAILED:\n" + (rr.stderr or b"").decode("utf-8","ignore")[-500:])
-            # Show diagnostic
             missing = [i for i in range(len(segs)) if not os.path.exists(os.path.join(tmp, str(i).zfill(5)+".ts"))]
             if missing: print("[YOUKU] Missing TS: " + str(missing[:20]))
             return None
-        if os.path.exists(fp) and os.path.getsize(fp) > 0:
-            print("[YOUKU] Done: " + fp); return fp
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if os.path.exists(fp) and os.path.getsize(fp) > 0: print("[YOUKU] Done: " + fp); return fp
+    finally: shutil.rmtree(tmp, ignore_errors=True)
 
 def download_direct(url, fp, hd=None):
     hd = hd or dict(H)
@@ -133,7 +130,8 @@ def download(link, out_dir=None, cookie=None):
     vid = parse_url(link)
     if not vid: print("[YOUKU] Cannot parse URL"); return None
     print("[YOUKU] Video ID: " + vid)
-    info = get_video_info(vid, cookie)
+    use_firefox = "--firefox" in sys.argv
+    info = get_video_info(vid, cookie, use_firefox=use_firefox)
     if not info: return None
     print("[YOUKU] Title: " + info["title"])
     stream = info.get("stream_url","")
@@ -150,5 +148,7 @@ def download(link, out_dir=None, cookie=None):
     return result
 
 if __name__ == "__main__":
-    link = sys.argv[1] if len(sys.argv) > 1 else input("Youku link: ").strip()
+    use_firefox = "--firefox" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    link = args[0] if args else input("Youku link: ").strip()
     download(link)
