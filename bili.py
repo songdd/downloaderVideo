@@ -175,7 +175,7 @@ def download_video(url, filename, out_dir=None, cookie=None, retries=5, audio_ur
                             if chunk: af.write(chunk)
                     merged_fp = fp + ".merged.mp4"
                     ffmpeg = "ffmpeg"
-                    for g in [os.path.join(ROOT,"..","ffmpeg","bin","ffmpeg.exe"), "ffmpeg"]:
+                    for g in [os.path.join(ROOT, "bin", "ffmpeg.exe"), "ffmpeg"]:
                         if os.path.exists(g): ffmpeg = g; break
                     rr = subprocess.run([ffmpeg,"-i",fp,"-i",audio_fp,"-c","copy","-shortest","-y",merged_fp],
                                       capture_output=True, timeout=300)

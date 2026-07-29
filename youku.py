@@ -101,7 +101,7 @@ def download_m3u8(m3u8_url, fp, hd=None):
                 p = os.path.join(tmp, str(i).zfill(5) + ".ts")
                 if os.path.exists(p) and os.path.getsize(p) > 0: f.write("file " + p + "\n")
         ffmpeg = "ffmpeg"
-        for g in [r"D:\code\HD_HUMAN\ffmpeg\bin\ffmpeg.exe", "ffmpeg"]:
+        for g in [os.path.join(ROOT, "bin", "ffmpeg.exe"), "ffmpeg"]:
             if os.path.exists(g): ffmpeg = g; break
         rr = subprocess.run([ffmpeg,"-f","concat","-safe","0","-i",cf,"-c","copy",fp,"-y"], capture_output=True, timeout=300)
         if rr.returncode != 0:
