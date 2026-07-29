@@ -16,6 +16,7 @@ cookies/*.json
 
 # Chrome profile
 tmp/chrome_login/
+tmp/tencent_profile/
 
 # OS files
 Thumbs.db

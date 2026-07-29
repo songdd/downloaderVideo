@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Multi-platform video downloader.
-Supports: Douyin (抖音), Xiaohongshu (小红书), Kuaishou (快手)
+Supports: Douyin (闁硅埖鐗犻悡?, Xiaohongshu (閻忓繐绻掔€涒晜绋?, Kuaishou (闊浂鍋呮晶?
 Usage: python run.py <share_link>
    or: python run.py
 """
@@ -17,6 +17,7 @@ PLATFORMS = {
     "kuaishou": ["kuaishou.com", "kuaishou"],
     "bilibili":  ["bilibili.com", "b23.tv"],
     "youku":     ["youku.com", "v.youku.com"],
+    "tencent":   ["v.qq.com"],
 }
 
 
@@ -31,7 +32,7 @@ def detect_platform(url):
 def main():
     # Handle special commands
     if len(sys.argv) > 1 and sys.argv[1] in ("--login", "-l"):
-        platform = sys.argv[2] if len(sys.argv) > 2 else input("Platform (douyin/xhs/kuaishou/bilibili/youku): ").strip()
+        platform = sys.argv[2] if len(sys.argv) > 2 else input("Platform (douyin/xhs/kuaishou/bilibili/youku/tencent): ").strip()
         from login import login_platform
         login_platform(platform)
         return
@@ -56,7 +57,7 @@ def main():
         print(f"  KS:      https://v.kuaishou.com/xxxx")
         print(f"  Bilibili: https://b23.tv/xxxx  or  https://www.bilibili.com/video/BVxxx")
         print(f"  Youku:    https://v.youku.com/v_show/id_XXXXX.html")
-        return
+        print(f"  Tencent:  https://v.qq.com/x/page/xxxxx.html")
 
     print(f"Detected: {platform}")
     print("=" * 50)
@@ -95,6 +96,9 @@ def main():
         import bili
         bili.download(link)
 
+    elif platform == "tencent":
+        import tencent
+        tencent.download(link)
     elif platform == "youku":
         import youku
         youku.download(link)

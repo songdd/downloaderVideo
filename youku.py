@@ -49,7 +49,7 @@ def get_video_info(vid, cookie=None, use_firefox=False):
                 js_url = page.evaluate("""() => {var v=document.querySelector('video');if(v&&v.src)return v.src;var ss=document.querySelectorAll('script');for(var i=0;i<ss.length;i++){var t=ss[i].textContent||'';var m=t.match(/https?:[^\"'\\s]+\\.m3u8[^\"'\\s]*/);if(m)return m[0]}return null}""")
                 if js_url: print("[YOUKU] JS found: " + str(js_url)[:120]); video_urls.append((js_url, 0))
             except Exception as e: print("[YOUKU] JS error: " + str(e))
-            try: title = page.title().replace("-优酷","").replace("-游戏","").strip()
+            try: title = page.title().replace("-浼橀叿","").replace("-娓告垙","").strip()
             except: pass
             browser.close()
     except Exception as e: print("[YOUKU] PW error: " + str(e)); return None
@@ -99,7 +99,7 @@ def download_m3u8(m3u8_url, fp, hd=None):
         with open(cf, "w") as f:
             for i in range(len(segs)):
                 p = os.path.join(tmp, str(i).zfill(5) + ".ts")
-                if os.path.exists(p) and os.path.getsize(p) > 0: f.write("file " + p + "\n")
+                if os.path.exists(p) and os.path.getsize(p) > 0: f.write("file " + p.replace("\\", "/") + "\n")
         ffmpeg = "ffmpeg"
         for g in [os.path.join(ROOT, "bin", "ffmpeg.exe"), "ffmpeg"]:
             if os.path.exists(g): ffmpeg = g; break

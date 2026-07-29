@@ -20,6 +20,10 @@ PLATFORMS = {
         "file": "kuaishou.json", 
         "help": "Login to kuaishou.com in Chrome, press F12 -> Application -> Cookies -> kuaishou.com, copy all cookies, then run: python login.py kuaishou --cookie 'kuaishou.server.web_st=xxx; did=yyy'",
     },
+    "tencent": {
+        "file": "tencent.json",
+        "help": "Login to v.qq.com in Chrome, then run: python login.py tencent",
+    },
     "youku": {
         "file": "youku.json",
         "help": "Login to youku.com in Chrome, then run: python login.py youku",
