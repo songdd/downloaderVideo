@@ -34,17 +34,14 @@ def get_video_url(url):
         print('[ERROR] Cannot extract modal_id')
         return None
     modal_id = m.group(1)
-    account_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                'cookies', 'account.json')
-    with open(account_path, 'r', encoding='utf-8') as f:
-        cookies = json.load(f).get('cookies', [])
-    seen = set()
-    pairs = []
-    for c in cookies:
-        if c['name'] not in seen:
-            seen.add(c['name'])
-            pairs.append('%s=%s' % (c['name'], c['value']))
-    cookie_str = '; '.join(pairs)
+    cookie_str = ""
+    try:
+        from cookies import load_cookie
+        cookie_str = load_cookie("douyin") or ""
+    except Exception:
+        pass
+    if not cookie_str:
+        print("[DOUYIN] No cookie. Try: python login.py douyin")
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                'Referer': 'https://www.douyin.com/', 'Cookie': cookie_str}
     apis = [

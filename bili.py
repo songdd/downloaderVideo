@@ -206,7 +206,7 @@ def download_video(url, filename, out_dir=None, cookie=None, retries=5, audio_ur
             if attempt < retries-1: time.sleep(min(5+attempt*3,20))
     return None
 
-def download(link, out_dir=None, cookie=None):
+def download(link, out_dir=None, cookie=None, start_from=1):
     cookie = cookie or load_cookie()
     if cookie:
         v, info = check_cookie_valid(cookie)
@@ -231,15 +231,27 @@ def download(link, out_dir=None, cookie=None):
             eps_to_dl, out = eps, sd
         else: eps_to_dl, out = [info], out_dir
         results = []
+        skipped = 0
         for i, ep in enumerate(eps_to_dl):
+            if i + 1 < start_from:
+                continue
             n = ep.get("ep_num","") or str(i+1)
             t = re.sub(r'[<>:"/\\|?*]','_',ep["title"])[:35]
+            # Skip if already downloaded
+            existing = [f for f in os.listdir(out) if os.path.isfile(os.path.join(out, f)) and f.startswith("bili_" + n + "_")]
+            if existing:
+                skipped += 1
+                continue
             print("\n[BILI] [" + str(i+1) + "/" + str(len(eps_to_dl)) + "] " + n)
             url, audio_url, q = get_best_play_url(True, ep_id=ep.get("ep_id",""), cookie=cookie)
             if not url: continue
             fn = "bili_" + n + "_" + t + "_" + q + "_" + time.strftime("%Y%m%d_%H%M%S") + ".mp4"
             results.append(download_video(url, fn, out, cookie, audio_url=audio_url))
             if i < len(eps_to_dl)-1: time.sleep(1)
+        if skipped > 0:
+            print("[BILI] Skipped " + str(skipped) + " already downloaded")
+        if skipped > 0:
+            print("[BILI] Skipped " + str(skipped) + " already downloaded")
         return results
     else:
         info = get_video_info(p["id"], cookie)
@@ -254,5 +266,6 @@ def download(link, out_dir=None, cookie=None):
 if __name__ == "__main__":
     import argparse; ap = argparse.ArgumentParser()
     ap.add_argument("link", nargs="?")
+    ap.add_argument("--start-from", type=int, default=1, help="Start downloading from episode N")
     a = ap.parse_args()
-    download(a.link) if a.link else download(input("Link: ").strip())
+    download(a.link, start_from=a.start_from) if a.link else download(input("Link: ").strip())

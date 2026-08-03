@@ -94,7 +94,10 @@ def login_platform(platform, force_interactive=False):
 
     if not force_interactive:
         print(f"[LOGIN] Trying Chrome DB...")
-        cookie = extract_chrome_cookies(domain)
+        try:
+            cookie = extract_chrome_cookies(domain)
+        except PermissionError:
+            cookie = None
         if cookie:
             save_cookie(platform, cookie)
             print(f"[LOGIN] OK ({len(cookie)} chars)"); return

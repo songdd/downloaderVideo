@@ -18,6 +18,8 @@ PLATFORMS = {
     "bilibili":  ["bilibili.com", "b23.tv"],
     "youku":     ["youku.com", "v.youku.com"],
     "tencent":   ["v.qq.com"],
+    "dushu":     ["dushu365.com"],
+    "ximalaya":  ["ximalaya.com"],
 }
 
 
@@ -28,10 +30,17 @@ def detect_platform(url):
                 return name
     return None
 
+def _get_start_from():
+    try:
+        idx = sys.argv.index("--start-from")
+        return int(sys.argv[idx + 1])
+    except (ValueError, IndexError):
+        return 1
+
 
 def main():
     # Handle special commands
-    if len(sys.argv) > 1 and sys.argv[1] in ("--login", "-l"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("-l",):
         platform = sys.argv[2] if len(sys.argv) > 2 else input("Platform (douyin/xhs/kuaishou/bilibili/youku/tencent): ").strip()
         from login import login_platform
         login_platform(platform)
@@ -41,7 +50,13 @@ def main():
         status()
         return
 
-    link = sys.argv[1] if len(sys.argv) > 1 else input("Paste share link: ").strip()
+    link = None
+    for a in sys.argv[1:]:
+        if a.startswith("http"):
+            link = a
+            break
+    if not link:
+        link = input("Paste share link: ").strip()
     if not link:
         print("No link provided.")
         return
@@ -94,7 +109,7 @@ def main():
 
     elif platform == "bilibili":
         import bili
-        bili.download(link)
+        bili.download(link, start_from=_get_start_from())
 
     elif platform == "tencent":
         import tencent
@@ -102,6 +117,17 @@ def main():
     elif platform == "youku":
         import youku
         youku.download(link)
+
+    elif platform == "ximalaya":
+        import xm
+        if "--login" in sys.argv:
+            xm._interactive_login_and_download(link, download_all=("--all" in sys.argv), start_from=_get_start_from())
+        else:
+            xm.download(link, download_all=("--all" in sys.argv), start_from=_get_start_from())
+
+    elif platform == "dushu":
+        import dushu
+        dushu.download(link, download_all=("--all" in sys.argv))
 
     print("\nDone. Check the output/ folder.")
 
