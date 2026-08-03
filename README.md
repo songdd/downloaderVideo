@@ -1,118 +1,165 @@
-# Video Downloader - Multi-Platform
+﻿# Multi-Platform Media Downloader
 
-Batch video download tool supporting Douyin, Xiaohongshu, Kuaishou, Bilibili, Youku, and Tencent Video.
+Video and audio downloader supporting 8 Chinese platforms.
 
 ## Quick Start
 
 ```powershell
 cd D:\code\downloaderVideo
 pip install -r requirements.txt
-playwright install chromium    # needed for Kuaishou, Youku, Tencent
+playwright install chromium
 ```
-
-> Tencent Video also requires `ffmpeg` in `bin/ffmpeg.exe` (included).
 
 ## Usage
 
-### Download a video
+### Download from URL
 
 ```powershell
-python run.py "https://v.douyin.com/xxxx/"
-python run.py "http://xhslink.com/xxxx"
-python run.py "https://v.kuaishou.com/xxxx"
-python run.py "https://b23.tv/xxxx"
-python run.py "https://v.youku.com/v_show/id_XXXXX.html"
-python run.py "https://v.qq.com/x/page/xxxxx.html"
+python run.py <url>
 ```
 
-The tool auto-detects the platform from the URL. Files are saved to `output/`.
+The tool auto-detects the platform. Files are saved to `output/`.
+
+### Batch download all episodes
+
+```powershell
+python run.py --all <url>           # All episodes in an album/season
+python run.py --all --start-from 10 <url>  # Start from episode 10
+```
+
+Already-downloaded files are automatically skipped.
 
 ### Login (save cookies)
 
 ```powershell
-python run.py --login bilibili         # auto-extract from Chrome DB
-python run.py --login bilibili --new   # interactive Chrome login window
-python run.py --status                 # check all platform cookies
+python run.py -l bilibili           # Auto-extract from Chrome, or interactive window
+python run.py -s                    # Show cookie status for all platforms
 ```
-
-### Tencent Video - Interactive Login
-
-Tencent Video uses interactive login via visible Chrome window for best quality.
-
-```powershell
-# Single episode download (interactive login)
-python run.py "https://v.qq.com/x/cover/xxx/xxx.html" --login
-
-# Playlist mode: auto-download all episodes
-python run.py "https://v.qq.com/x/cover/xxx/xxx.html" --login --playlist
-
-# Headless mode (no visible window)
-python run.py "https://v.qq.com/x/page/xxx.html" --headless
-```
-
-**Interactive login flow:**
-
-1. Open Chrome → login page → you log in (scan QR code or password)
-2. Press Enter in terminal → auto-navigate to video page
-3. Video plays at 2x speed → close browser when finished
-4. Segments are collected and merged via ffmpeg
-
-**Playlist mode (`--playlist`):**
-
-- Detects when the video auto-advances to the next episode (URL change)
-- Saves current episode, clears storage, reloads for fresh start
-- Background thread downloads each episode as it's collected
-- Close the browser to stop and download remaining episodes
 
 ## Supported Platforms
 
-| Platform | Module | Method | Cookie | Quality |
-|---|---|---|---|---|
-| **Douyin** | `douyin_api.py` | API + Cookie | Required | Highest available |
-| **Xiaohongshu** | `xhs.py` | Page scrape | Optional | Original |
-| **Kuaishou** | `ks_pw.py` | Playwright intercept | Optional | Max captured |
-| **Bilibili** | `bili.py` | API + multi-thread | Optional | 4K~360P auto-select |
-| **Youku** | `youku.py` | Playwright intercept | Required | Intercepted stream |
-| **Tencent Video** | `tencent.py` | Playwright + segment collection | Login recommended | Login: 1080P SDR via segment merge |
+| Platform | Module | Method | Cookie | Batch | Features |
+|----------|--------|--------|--------|-------|----------|
+| **Douyin** | `douyin_api.py` | API | Optional | None | Short link resolve, play URL extraction |
+| **Xiaohongshu** | `xhs.py` | Page scrape | Optional | None | Short link redirect, `__INITIAL_STATE__` parse |
+| **Kuaishou** | `ks_pw.py` / `ks.py` | Playwright / page scrape | Optional | None | Playwright intercept as primary, page scrape as fallback |
+| **Bilibili** | `bili.py` | API + multi-thread | Login for HD | Season (`--all`) | 4K~360P auto-select, DASH audio merge, `--start-from` |
+| **Youku** | `youku.py` | Playwright intercept | Required | None | Chrome/Firefox dual browser, JS inject extract |
+| **Tencent** | `tencent.py` | Playwright + segment collect | Login recommended | Playlist (`--all --playlist`) | Interactive login, HLS/m3u8 merge, auto-advance detect |
+| **Dushu365** | `dushu.py` | SSR parse + AES API | Optional | Course (`--all`) | Book & course audio, AES-256-ECB decryption |
+| **Ximalaya** | `xm.py` | API + CDP fallback | Optional | Album (`--all`) | Mobile API pagination, redirect resolve, `--login` interactive |
+
+## Platform Details
+
+### Douyin (抖音)
+
+```powershell
+python run.py https://v.douyin.com/xxxx/
+python run.py -l douyin              # First time: save login cookie
+```
+
+Cookie stored in `cookies/douyin.json` via unified `cookies.py`. Without cookie, video quality may be limited.
+
+### Bilibili (哔哩哔哩)
+
+```powershell
+# Single video
+python run.py https://www.bilibili.com/video/BVxxxxxx
+
+# Full season (番剧)
+python run.py --all https://www.bilibili.com/bangumi/play/ep327107
+
+# Continue from episode 6
+python run.py --all --start-from 6 https://www.bilibili.com/bangumi/play/ep327339
+```
+
+- Logged-in users get 1080P/4K; free users limited to 720P/480P
+- Multi-threaded download (4 threads) with auto-retry
+- DASH video+audio separated streams auto-merged via ffmpeg
+- Cookie valid for months (`SESSDATA`)
+
+### Dushu365 (读书365 / 帆书)
+
+```powershell
+# Single book audio
+python run.py https://www.dushu365.com/book/400138922
+
+# Single course episode
+python run.py https://www.dushu365.com/course/400000044/200002994
+
+# All episodes in a course
+python run.py --all https://www.dushu365.com/course/400000044/200002994
+
+# List all available books
+python dushu.py --list
+```
+
+- Pure SSR page with `__NEXT_DATA__` JSON — no cookie needed
+- Course audio via gateway API with AES-256-ECB encryption
+
+### Ximalaya (喜马拉雅)
+
+```powershell
+# Single track by ID
+python run.py 72982155
+
+# Full album
+python run.py --all https://www.ximalaya.com/album/13396678
+
+# From episode N
+python run.py --all --start-from 62 https://www.ximalaya.com/album/81107159
+
+# Interactive login (for paid tracks, opens visible Chrome)
+python run.py --login --all https://www.ximalaya.com/album/81107159
+```
+
+- Free tracks: direct API, no login needed
+- Paid tracks: require `--login` mode (visible Chrome + manual login)
+- Audio redirect URLs auto-resolved to real CDN addresses
+- `--start-from` and skip-existing supported
+
+### Tencent Video (腾讯视频)
+
+```powershell
+# Interactive login (recommended for VIP content)
+python run.py "https://v.qq.com/x/cover/xxx/xxx.html" --login
+
+# Playlist mode
+python run.py "https://v.qq.com/x/cover/xxx/xxx.html" --login --playlist
+```
+
+- Opens visible Chrome for real session login
+- 2x speed playback to collect TS segments, merged via ffmpeg
+- Playlist mode detects episode auto-advance for sequential download
 
 ## File Structure
 
 ```
 downloaderVideo/
-├── run.py              # Entry point - auto-detect platform
-├── run.bat             # Windows double-click launcher
-├── login.py            # Login helper (Chrome cookie DB + Playwright)
-├── cookies.py          # Unified cookie storage
+├── run.py              # Entry point — auto-detect platform
+├── login.py            # Login helper (Chrome cookie DB + Playwright fallback)
+├── cookies.py          # Unified cookie storage (JSON files)
 ├── requirements.txt    # Python dependencies
-├── bin/
-│   └── ffmpeg.exe      # ffmpeg for TS segment merging
-├── cookies/            # Cookie JSON files
-├── output/             # Downloaded videos
-└── tmp/                # Browser profiles (auto-created)
+├── bili.py             # Bilibili downloader
+├── douyin_api.py       # Douyin API
+├── xhs.py              # Xiaohongshu scraper
+├── ks.py / ks_pw.py    # Kuaishou (page scrape / Playwright)
+├── youku.py            # Youku downloader
+├── tencent.py          # Tencent Video downloader
+├── dushu.py            # Dushu365 audio downloader
+├── xm.py               # Ximalaya audio downloader
+├── cookies/            # Cookie JSON files per platform
+├── output/             # Downloaded media
+└── tmp/                # Temporary browser profiles
 ```
 
-## Tencent Video Features
+## Common Flags
 
-- **Interactive login**: visible Chrome window for real session, no cookie injection needed
-- **Playlist mode**: auto-detect episode changes, download entire season
-- **Segment collection**: captures all TS segments during playback, merges with ffmpeg
-- **Quality best-effort**: downloads at the quality set in the player
-- **Resume position reset**: clears IndexedDB/localStorage to force start from beginning
-- **Auto-advance detection**: monitors page URL changes to track episode transitions
-- **Background download**: episodes are merged in background threads while next episode plays
-
-## Installation
-
-```powershell
-pip install requests tqdm playwright
-```
-
-`playwright` is required for Kuaishou (`ks_pw.py`), Youku (`youku.py`), and Tencent Video (`tencent.py`).
-
-## Notes
-
-- **Douyin**: needs `account.json` in `cookies/`. Cookie expires ~1-3 months.
-- **Kuaishou**: needs Playwright. The `ks.py` fallback (page scraping) is broken because Kuaishou uses CSR.
-- **Bilibili**: free accounts limited to 360P/720P. Login unlocks 1080P/4K. SESSDATA cookie lasts months.
-- **Youku**: needs Playwright + login cookie. DRM content (premium shows) cannot be downloaded.
-- **Tencent Video**: requires Playwright + `bin/ffmpeg.exe`. Free content uses HLS direct download. VIP content requires `--login` for interactive segment collection. Speed is limited to real-time playback at 2x (wait time ~10 min per episode). Playlist mode `--playlist` can auto-collect consecutive episodes.
+| Flag | Description |
+|------|-------------|
+| `--all` | Download all episodes/tracks in album/season |
+| `--start-from N` | Start downloading from episode N (Bilibili, Ximalaya) |
+| `--login` | Interactive browser login (Tencent, Ximalaya) |
+| `--list` | List available content (Dushu365) |
+| `-l <platform>` | Save login cookie for a platform |
+| `-s` | Show cookie status for all platforms |
