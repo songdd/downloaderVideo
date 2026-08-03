@@ -277,7 +277,7 @@ def download(link, output_dir=None, download_all=False, start_from=1):
             fn = "xm_" + safe_fn(info["title"]) + "_" + ts + ext
             results.append(download_audio(info["audio_url"], fn, output_dir))
             if i < total - 1:
-                time.sleep(1)
+                time.sleep(10)
         ok = sum(1 for r in results if r)
         msg = f"\n[XM] Done: {ok}/{total} downloaded"
         if skipped_existing > 0:
@@ -407,7 +407,7 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
 
             if (i + 1) % 50 == 0:
                 print("\n  --- {}/{} done, {} downloaded, {} skipped ---".format(i+1, total, ok, skip))
-            time.sleep(5.0)
+            time.sleep(10.0)
 
         print("\n\n[XM] Done: {} downloaded, {} skipped (no audio)".format(ok, skip))
         ctx.close()
