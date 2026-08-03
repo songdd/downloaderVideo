@@ -1,7 +1,7 @@
 import os, re, sys, json, time, base64, requests
 from tqdm import tqdm
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 H = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
      "Referer": "https://www.dushu365.com/"}

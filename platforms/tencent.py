@@ -5,8 +5,8 @@ Usage: from tencent import download; download("https://v.qq.com/x/page/x1234abcd
 
 import os, re, sys, time, requests, shutil, subprocess, threading
 from tqdm import tqdm
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 H = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36","Referer":"https://v.qq.com/"}
 
 

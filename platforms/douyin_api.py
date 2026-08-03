@@ -12,7 +12,7 @@ def download_video(url, title):
     r = requests.get(url, headers=headers, stream=True)
     cl = r.headers.get('Content-Length', '?')
     print('[DOWNLOAD] HTTP %s, Content-Length: %s' % (r.status_code, cl))
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     video_dir = os.path.join(current_dir, 'output')
     os.makedirs(video_dir, exist_ok=True)
     if r.status_code == 200:

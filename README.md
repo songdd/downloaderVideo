@@ -140,14 +140,16 @@ downloaderVideo/
 ├── login.py            # Login helper (Chrome cookie DB + Playwright fallback)
 ├── cookies.py          # Unified cookie storage (JSON files)
 ├── requirements.txt    # Python dependencies
-├── bili.py             # Bilibili downloader
-├── douyin_api.py       # Douyin API
-├── xhs.py              # Xiaohongshu scraper
-├── ks.py / ks_pw.py    # Kuaishou (page scrape / Playwright)
-├── youku.py            # Youku downloader
-├── tencent.py          # Tencent Video downloader
-├── dushu.py            # Dushu365 audio downloader
-├── xm.py               # Ximalaya audio downloader
+├── platforms/          # Platform-specific downloaders
+│   ├── bili.py         #   Bilibili
+│   ├── douyin_api.py   #   Douyin
+│   ├── xhs.py          #   Xiaohongshu
+│   ├── ks.py           #   Kuaishou (page scrape)
+│   ├── ks_pw.py        #   Kuaishou (Playwright)
+│   ├── youku.py        #   Youku
+│   ├── tencent.py      #   Tencent Video
+│   ├── dushu.py        #   Dushu365 audio
+│   └── xm.py           #   Ximalaya audio
 ├── cookies/            # Cookie JSON files per platform
 ├── output/             # Downloaded media
 └── tmp/                # Temporary browser profiles

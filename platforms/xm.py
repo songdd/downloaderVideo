@@ -1,7 +1,7 @@
 import os, re, sys, json, time, requests
 from tqdm import tqdm
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHROME_PROFILE = os.path.join(os.environ.get("LOCALAPPDATA",""), "Google", "Chrome", "User Data")
 USE_CHROME = "--use-chrome" in sys.argv
 _CHROME_LOCKED = False

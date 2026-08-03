@@ -118,7 +118,7 @@ def get_video_url(url):
 def download_video(video_url, filename=None, output_dir=None):
     """Download video from URL"""
     if output_dir is None:
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output")
     os.makedirs(output_dir, exist_ok=True)
 
     if filename is None:
