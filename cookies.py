@@ -32,6 +32,10 @@ PLATFORMS = {
         "file": "bilibili.json",
         "help": "Login to bilibili.com in Chrome, press F12 -> Application -> Cookies -> bilibili.com, copy SESSDATA value, then run: python login.py bilibili --cookie 'SESSDATA=xxx'",
     },
+    "wangyiyun": {
+        "file": "wangyiyun.json",
+        "help": "Login to music.163.com in Chrome, then run: python login.py wangyiyun",
+    },
 }
 
 

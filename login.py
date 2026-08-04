@@ -8,12 +8,12 @@ from cookies import save_cookie, status, PLATFORMS
 CHROME_USER_DATA = os.path.join(os.environ.get("LOCALAPPDATA",""), "Google","Chrome","User Data")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-PLATFORM_DOMAINS = {"douyin":"douyin.com","xhs":"xiaohongshu.com","kuaishou":"kuaishou.com","bilibili":"bilibili.com","youku":"youku.com","tencent":"v.qq.com"}
+PLATFORM_DOMAINS = {"douyin":"douyin.com","xhs":"xiaohongshu.com","kuaishou":"kuaishou.com","bilibili":"bilibili.com","youku":"youku.com","tencent":"v.qq.com","wangyiyun":"music.163.com"}
 
 PLATFORM_URLS = {"douyin":"https://creator.douyin.com","xhs":"https://www.xiaohongshu.com/explore",
                  "kuaishou":"https://www.kuaishou.com","bilibili":"https://www.bilibili.com","youku":"https://www.youku.com","tencent":"https://v.qq.com"}
 
-LOGIN_KEYS = {"bilibili":("SESSDATA",20),"douyin":("sessionid",10),"xhs":("web_session",10),"kuaishou":("kuaishou.server.web_st",10),"youku":("P_pck_rm",10),"tencent":("v_vuserid",5)}
+LOGIN_KEYS = {"bilibili":("SESSDATA",20),"douyin":("sessionid",10),"xhs":("web_session",10),"kuaishou":("kuaishou.server.web_st",10),"youku":("P_pck_rm",10),"tencent":("v_vuserid",5),"wangyiyun":("MUSIC_U",20)}
 
 def extract_chrome_cookies(domain):
     cookie_db = os.path.join(CHROME_USER_DATA,"Default","Network","Cookies")
