@@ -6,7 +6,8 @@ Usage: python run.py <share_link>
    or: python run.py
 """
 
-import os, sys
+import os, sys, time
+from task_tracker import TaskTracker
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -68,29 +69,32 @@ def _batch_download_from_file(filepath, batch_all=False):
                 if modal_id:
                     page_url = "https://www.douyin.com/user/self?showTab=post&modal_id=" + modal_id
                     play_url = douyin_api.get_video_url(page_url)
-                    if play_url: douyin_api.download_video(play_url, play_url.split("/")[-1])
+                    if play_url: result = douyin_api.download_video(play_url, play_url.split("/")[-1]); _tracker.record_result(result) if _tracker else None
             elif platform == "xhs":
-                from platforms import xhs; xhs.download(url)
+                from platforms import xhs; result = xhs.download(url); _tracker.record_result(result) if _tracker else None
             elif platform == "kuaishou":
                 try:
-                    from platforms import ks_pw; ks_pw.download(url)
+                    from platforms import ks_pw; result = ks_pw.download(url); _tracker.record_result(result) if _tracker else None
                 except:
-                    from platforms import ks; ks.download(url)
+                    from platforms import ks; result = ks.download(url); _tracker.record_result(result) if _tracker else None
             elif platform == "bilibili":
-                from platforms import bili; bili.download(url,
+                from platforms import bili; result = bili.download(url,
                     start_from=_get_start_from() if "--start-from" in sys.argv else 1)
+                if _tracker: _tracker.record_result(result)
             elif platform == "tencent":
-                from platforms import tencent; tencent.download(url)
+                from platforms import tencent; result = tencent.download(url); _tracker.record_result(result) if _tracker else None
             elif platform == "youku":
-                from platforms import youku; youku.download(url)
+                from platforms import youku; result = youku.download(url); _tracker.record_result(result) if _tracker else None
             elif platform == "ximalaya":
                 from platforms import xm
                 if "--login" in sys.argv:
                     xm._interactive_login_and_download(url, download_all=batch_all,
                         start_from=_get_start_from() if "--start-from" in sys.argv else 1)
+                if _tracker: _tracker.record_result(result)
                 else:
                     xm.download(url, download_all=batch_all,
                         start_from=_get_start_from() if "--start-from" in sys.argv else 1)
+                if _tracker: _tracker.record_result(result)
             elif platform == "dushu":
                 from platforms import dushu; dushu.download(url, download_all=batch_all)
             elif platform == "wangyiyun":
@@ -140,6 +144,11 @@ def main():
     platform = detect_platform(link)
     if not platform:
         print(f"Unknown platform. Supported: {', '.join(PLATFORMS.keys())}")
+
+    # Task tracker for upload
+    _tracker = TaskTracker() if "--upload-baidu" in sys.argv else None
+    if _tracker:
+        _tracker.start_upload()
         print(f"  Douyin: https://v.douyin.com/xxxx/")
         print(f"  XHS:     http://xhslink.com/xxxx")
         print(f"  KS:      https://v.kuaishou.com/xxxx")
@@ -182,7 +191,8 @@ def main():
 
     elif platform == "bilibili":
         from platforms import bili
-        bili.download(link, start_from=_get_start_from())
+        result = bili.download(link, start_from=_get_start_from())
+        if _tracker: _tracker.record_result(result)
 
     elif platform == "tencent":
         from platforms import tencent
@@ -194,19 +204,24 @@ def main():
     elif platform == "ximalaya":
         from platforms import xm
         if "--login" in sys.argv:
-            xm._interactive_login_and_download(link, download_all=("--all" in sys.argv), start_from=_get_start_from())
+            result = xm._interactive_login_and_download(link, download_all=("--all" in sys.argv), start_from=_get_start_from()); _tracker.record_result(result) if _tracker else None
         else:
-            xm.download(link, download_all=("--all" in sys.argv), start_from=_get_start_from())
+            result = xm.download(link, download_all=("--all" in sys.argv), start_from=_get_start_from()); _tracker.record_result(result) if _tracker else None
 
     elif platform == "wangyiyun":
         from platforms import wangyiyun
-        wangyiyun.download(link, download_all=("--all" in sys.argv))
+        result = wangyiyun.download(link, download_all=("--all" in sys.argv)); _tracker.record_result(result) if _tracker else None
 
     elif platform == "dushu":
         from platforms import dushu
-        dushu.download(link, download_all=("--all" in sys.argv))
+        result = dushu.download(link, download_all=("--all" in sys.argv)); _tracker.record_result(result) if _tracker else None
 
+    if _tracker:
+        _tracker.wait()
+        _tracker.save_log()
     print("\nDone. Check the output/ folder.")
+
+
 
 
 if __name__ == "__main__":

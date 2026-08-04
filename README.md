@@ -1,6 +1,6 @@
 ﻿# Multi-Platform Media Downloader
 
-Video and audio downloader supporting 8 Chinese platforms.
+Video and audio downloader supporting 9 Chinese platforms, with optional Baidu Netdisk upload.
 
 ## Quick Start
 
@@ -15,153 +15,149 @@ playwright install chromium
 ### Download from URL
 
 ```powershell
-python run.py <url>
+python run.py <url>                    # Single item
+python run.py --all <url>              # Batch: all episodes/tracks in album/season
+python run.py --all --start-from 10 <url>   # Start from episode 10
+python run.py --file urls.txt          # Batch from file (one URL per line, # for comments)
 ```
 
-The tool auto-detects the platform. Files are saved to `output/`.
-
-### Batch download all episodes
-
-```powershell
-python run.py --all <url>           # All episodes in an album/season
-python run.py --all --start-from 10 <url>  # Start from episode 10
-```
-
-Already-downloaded files are automatically skipped.
+Files save to `output/`. Already-downloaded files are automatically skipped.
 
 ### Login (save cookies)
 
 ```powershell
-python run.py -l bilibili           # Auto-extract from Chrome, or interactive window
-python run.py -s                    # Show cookie status for all platforms
+python run.py -l <platform>            # Auto-extract from Chrome, or interactive window
+python run.py -s                       # Show cookie status for all platforms
 ```
+
+### Baidu Netdisk Upload
+
+```powershell
+# First time: authorize once
+python upload_baidu.py --auth
+
+# Upload after download
+python run.py --upload-baidu <url>
+python run.py --file urls.txt --upload-baidu
+
+# Custom remote directory
+python run.py --upload-baidu --baidu-dir "/music/排行榜" <url>
+```
+
+Credentials in `config.json`. Upload runs in background while downloading continues.
 
 ## Supported Platforms
 
-| Platform | Module | Method | Cookie | Batch | Features |
-|----------|--------|--------|--------|-------|----------|
-| **Douyin** | `douyin_api.py` | API | Optional | None | Short link resolve, play URL extraction |
-| **Xiaohongshu** | `xhs.py` | Page scrape | Optional | None | Short link redirect, `__INITIAL_STATE__` parse |
-| **Kuaishou** | `ks_pw.py` / `ks.py` | Playwright / page scrape | Optional | None | Playwright intercept as primary, page scrape as fallback |
-| **Bilibili** | `bili.py` | API + multi-thread | Login for HD | Season (`--all`) | 4K~360P auto-select, DASH audio merge, `--start-from` |
-| **Youku** | `youku.py` | Playwright intercept | Required | None | Chrome/Firefox dual browser, JS inject extract |
-| **Tencent** | `tencent.py` | Playwright + segment collect | Login recommended | Playlist (`--all --playlist`) | Interactive login, HLS/m3u8 merge, auto-advance detect |
-| **Dushu365** | `dushu.py` | SSR parse + AES API | Optional | Course (`--all`) | Book & course audio, AES-256-ECB decryption |
-| **Ximalaya** | `xm.py` | API + CDP fallback | Optional | Album (`--all`) | Mobile API pagination, redirect resolve, `--login` interactive |
+| Platform | Module | Cookie | Batch | Special |
+|----------|--------|--------|-------|---------|
+| **Douyin** | `douyin_api.py` | Optional | None | Short link resolve |
+| **Xiaohongshu** | `xhs.py` | Optional | None | `__INITIAL_STATE__` parse |
+| **Kuaishou** | `ks_pw.py` / `ks.py` | Optional | None | Playwright primary, page scrape fallback |
+| **Bilibili** | `bili.py` | Login for HD | Auto-detect season | 4K~360P, DASH merge, `--start-from` |
+| **Youku** | `youku.py` | Required | None | Chrome/Firefox, JS inject |
+| **Tencent** | `tencent.py` | Required | Playlist (`--login --playlist`) | HLS/m3u8 merge, auto-advance |
+| **Dushu365** | `dushu.py` | Optional | Course (`--all`) | AES-256-ECB API, book+course audio |
+| **Ximalaya** | `xm.py` | Optional | Album (`--all`) | Mobile API pagination, `--login` interactive |
+| **NetEase Music** | `wangyiyun.py` | MUSIC_U for VIP | Auto for playlist/album/artist | Charts, discover, pagination |
 
 ## Platform Details
-
-### Douyin (抖音)
-
-```powershell
-python run.py https://v.douyin.com/xxxx/
-python run.py -l douyin              # First time: save login cookie
-```
-
-Cookie stored in `cookies/douyin.json` via unified `cookies.py`. Without cookie, video quality may be limited.
 
 ### Bilibili (哔哩哔哩)
 
 ```powershell
-# Single video
 python run.py https://www.bilibili.com/video/BVxxxxxx
-
-# Full season (番剧)
 python run.py --all https://www.bilibili.com/bangumi/play/ep327107
-
-# Continue from episode 6
 python run.py --all --start-from 6 https://www.bilibili.com/bangumi/play/ep327339
 ```
 
-- Logged-in users get 1080P/4K; free users limited to 720P/480P
-- Multi-threaded download (4 threads) with auto-retry
-- DASH video+audio separated streams auto-merged via ffmpeg
-- Cookie valid for months (`SESSDATA`)
+Logged-in users get 1080P/4K. Multi-threaded (4 threads). DASH video+audio auto-merged.
 
-### Dushu365 (读书365 / 帆书)
+### NetEase Music (网易云音乐)
 
 ```powershell
-# Single book audio
-python run.py https://www.dushu365.com/book/400138922
+python run.py https://music.163.com/#/song?id=1210496        # Single song
+python run.py https://music.163.com/#/playlist?id=8055396278  # Playlist (auto-batch)
+python run.py https://music.163.com/#/album?id=123456         # Album (auto-batch)
+python run.py https://music.163.com/#/artist?id=9712          # Artist hot songs (auto-batch)
 
-# Single course episode
-python run.py https://www.dushu365.com/course/400000044/200002994
-
-# All episodes in a course
-python run.py --all https://www.dushu365.com/course/400000044/200002994
-
-# List all available books
-python dushu.py --list
+# Browse
+python run.py https://music.163.com/#/discover/toplist        # List all 63 charts
+python run.py https://music.163.com/#/discover/playlist        # Discover playlists
+python run.py https://music.163.com/#/discover/playlist --cat 古风 --page 2
 ```
 
-- Pure SSR page with `__NEXT_DATA__` JSON — no cookie needed
-- Course audio via gateway API with AES-256-ECB encryption
+Auto-detects playlist/album/artist and downloads all tracks. Output goes to named subdirectories (e.g., `output/热歌榜/`). VIP-only songs are skipped with a message.
 
 ### Ximalaya (喜马拉雅)
 
 ```powershell
-# Single track by ID
-python run.py 72982155
-
-# Full album
-python run.py --all https://www.ximalaya.com/album/13396678
-
-# From episode N
+python run.py 72982155                                         # Single track by ID
+python run.py --all https://www.ximalaya.com/album/13396678    # Full album
 python run.py --all --start-from 62 https://www.ximalaya.com/album/81107159
-
-# Interactive login (for paid tracks, opens visible Chrome)
-python run.py --login --all https://www.ximalaya.com/album/81107159
+python run.py --login --all https://www.ximalaya.com/album/81107159  # Interactive login
 ```
 
-- Free tracks: direct API, no login needed
-- Paid tracks: require `--login` mode (visible Chrome + manual login)
-- Audio redirect URLs auto-resolved to real CDN addresses
-- `--start-from` and skip-existing supported
+Free tracks use direct API. `--login` opens visible Chrome for manual login (needed for paid tracks).
+
+### Dushu365 (读书365 / 帆书)
+
+```powershell
+python run.py https://www.dushu365.com/book/400138922           # Single book
+python run.py https://www.dushu365.com/course/400000044/200002994  # Course episode
+python run.py --all https://www.dushu365.com/course/400000044/200002994  # All episodes
+python dushu.py --list                                           # List available books
+```
+
+Pure SSR — no cookie needed. Course audio via AES-256-ECB encrypted Gateway API.
 
 ### Tencent Video (腾讯视频)
 
 ```powershell
-# Interactive login (recommended for VIP content)
 python run.py "https://v.qq.com/x/cover/xxx/xxx.html" --login
-
-# Playlist mode
 python run.py "https://v.qq.com/x/cover/xxx/xxx.html" --login --playlist
 ```
 
-- Opens visible Chrome for real session login
-- 2x speed playback to collect TS segments, merged via ffmpeg
-- Playlist mode detects episode auto-advance for sequential download
+Opens visible Chrome for login. 2x playback collects TS segments, merged via ffmpeg.
+
+## Common Flags
+
+| Flag | Applies To | Description |
+|------|-----------|-------------|
+| `--all` | Bilibili, Dushu365, Ximalaya, NetEase | Download entire season/album/course/playlist |
+| `--start-from N` | Bilibili, Ximalaya | Start downloading from episode N |
+| `--login` | Tencent, Ximalaya | Interactive browser login |
+| `--file path` | All | Batch download from URL list file |
+| `--upload-baidu` | All | Upload files to Baidu Netdisk after download |
+| `--baidu-dir path` | All | Custom Baidu Netdisk upload directory |
+| `--cat name` | NetEase Music | Filter discover playlists by category |
+| `--page N` | NetEase Music | Browse discover playlists page N |
+| `-l <platform>` | All | Save login cookie for a platform |
+| `-s` | All | Show cookie status |
 
 ## File Structure
 
 ```
 downloaderVideo/
 ├── run.py              # Entry point — auto-detect platform
-├── login.py            # Login helper (Chrome cookie DB + Playwright fallback)
-├── cookies.py          # Unified cookie storage (JSON files)
+├── login.py            # Login helper (Chrome cookie DB + Playwright)
+├── cookies.py          # Unified cookie storage
+├── task_tracker.py     # Download task tracking + background Baidu upload
+├── upload_baidu.py     # Baidu Netdisk OAuth + file upload
+├── config.json         # Baidu cloud credentials
 ├── requirements.txt    # Python dependencies
 ├── platforms/          # Platform-specific downloaders
 │   ├── bili.py         #   Bilibili
 │   ├── douyin_api.py   #   Douyin
-│   ├── xhs.py          #   Xiaohongshu
+│   ├── dushu.py        #   Dushu365
 │   ├── ks.py           #   Kuaishou (page scrape)
 │   ├── ks_pw.py        #   Kuaishou (Playwright)
-│   ├── youku.py        #   Youku
 │   ├── tencent.py      #   Tencent Video
-│   ├── dushu.py        #   Dushu365 audio
-│   └── xm.py           #   Ximalaya audio
+│   ├── wangyiyun.py    #   NetEase Music
+│   ├── xhs.py          #   Xiaohongshu
+│   ├── xm.py           #   Ximalaya
+│   └── youku.py        #   Youku
 ├── cookies/            # Cookie JSON files per platform
 ├── output/             # Downloaded media
+├── logs/               # Task logs (created by --upload-baidu)
 └── tmp/                # Temporary browser profiles
 ```
-
-## Common Flags
-
-| Flag | Description |
-|------|-------------|
-| `--all` | Download all episodes/tracks in album/season |
-| `--start-from N` | Start downloading from episode N (Bilibili, Ximalaya) |
-| `--login` | Interactive browser login (Tencent, Ximalaya) |
-| `--list` | List available content (Dushu365) |
-| `-l <platform>` | Save login cookie for a platform |
-| `-s` | Show cookie status for all platforms |

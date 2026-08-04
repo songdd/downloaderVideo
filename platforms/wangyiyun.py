@@ -103,6 +103,8 @@ def parse_url(url):
     # Special: toplist page (check both main URL and fragment)
     if "/discover/toplist" in search_url or "/discover/toplist" in fragment:
         return ("toplist", "")
+    if "/discover/playlist" in search_url or "/discover/playlist" in fragment:
+        return ("discover_playlist", "")
 
     for pat, typ in [
         (r"/song\?id=(\d+)", "song"),
@@ -116,6 +118,24 @@ def parse_url(url):
     m = re.search(r"^(\d+)$", url.strip())
     if m: return ("song", m.group(1))
     return None
+
+
+def list_discover_playlists(session=None, cat="全部", limit=35, page=1):
+    if session is None:
+        session = _create_session()
+    try:
+        offset = (page - 1) * limit
+        r = session.get(
+            f"https://music.163.com/api/playlist/list?cat={cat}&limit={limit}&offset={offset}",
+            headers=H, timeout=15)
+        d = r.json()
+        pl_list = d.get("playlists", d.get("result", d.get("list", [])))
+        total = d.get("total", d.get("playlistCount", len(pl_list)))
+        result = [{"id": str(p["id"]), "name": p.get("name", ""),
+                    "count": p.get("trackCount", 0)} for p in pl_list]
+        return result, total
+    except Exception:
+        return [], 0
 
 
 def list_toplists(session=None):
@@ -313,11 +333,10 @@ def download(link, output_dir=None, download_all=False):
     safe = lambda s: re.sub(r'[<>:"/\\|?*]', "_", s)[:60].strip(" _")
     ts = time.strftime("%Y%m%d_%H%M%S")
 
-    if ptype in ("playlist", "album", "artist") or ptype == "toplist":
+    if ptype in ("playlist", "album", "artist", "discover_playlist") or ptype == "toplist":
         # Batch
         print("[WYY] Fetching track list...")
         if ptype == "toplist":
-            # Show available toplists
             toplists = list_toplists(session)
             print("[WYY] {} charts available:".format(len(toplists)))
             for tl in toplists:
@@ -325,6 +344,28 @@ def download(link, output_dir=None, download_all=False):
                     tl["name"][:40], tl["count"], tl["id"]))
             print("")
             print("[WYY] Example: python run.py https://music.163.com/playlist?id={}".format(toplists[0]["id"] if toplists else ""))
+            return None
+        elif ptype == "discover_playlist":
+            cat = "全部"
+            page = 1
+            if "--cat" in sys.argv:
+                try:
+                    ci = sys.argv.index("--cat"); cat = sys.argv[ci+1]
+                except: pass
+            if "--page" in sys.argv:
+                try:
+                    pi = sys.argv.index("--page"); page = int(sys.argv[pi+1])
+                except: pass
+            playlists, total = list_discover_playlists(session, cat, 35, page)
+            total_pages = (total + 34) // 35
+            print("[WYY] {} of {} playlists (cat: {}, page {}/{}):".format(
+                len(playlists), total, cat, page, total_pages))
+            for pl in playlists:
+                print("  {} -> python run.py https://music.163.com/playlist?id={}".format(pl["name"][:50], pl["id"]))
+            print("")
+            if page < total_pages:
+                print("[WYY] Next page: python run.py https://music.163.com/#/discover/playlist --cat {} --page {}".format(cat, page+1))
+            print("[WYY] Use --cat <name> --page <N> to browse")
             return None
         elif ptype == "playlist":
             tracks = get_playlist_tracks(pid, session)
