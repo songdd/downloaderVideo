@@ -33,6 +33,69 @@ def detect_platform(url):
                 return name
     return None
 
+
+HELP_TEXT = """
+==========================================================
+  Multi-Platform Media Downloader - Usage
+==========================================================
+
+Usage: python run.py <url> [options]
+
+EXAMPLES
+--------
+# Single download
+python run.py https://www.bilibili.com/video/BVxxxxxx
+python run.py https://music.163.com/#/song?id=1210496
+python run.py https://www.ximalaya.com/sound/72982155
+
+# Batch download (all episodes/tracks)
+python run.py --all <url>
+python run.py --all https://www.bilibili.com/bangumi/play/ep327107
+python run.py --all https://www.ximalaya.com/album/13396678
+
+# Start from episode N
+python run.py --all --start-from 10 <url>
+
+# Batch from file (one URL per line, # for comments)
+python run.py --file urls.txt
+python run.py --file urls.txt --all
+
+# Login / cookie management
+python run.py -l <platform>     # e.g. -l bilibili
+python run.py -s                # show cookie status
+
+# NetEase Music browsing
+python run.py https://music.163.com/#/discover/toplist        # list all charts
+python run.py https://music.163.com/#/discover/playlist        # discover playlists
+python run.py https://music.163.com/#/discover/playlist --cat 古风 --page 1 --endpage 3
+
+# Ximalaya interactive login (for paid tracks)
+python run.py --login --all https://www.ximalaya.com/album/xxx
+
+# Baidu Netdisk upload after download
+python run.py --upload-baidu <url>
+python run.py --upload-baidu --baidu-dir "/music/排行榜" <url>
+python upload_baidu.py --auth     # first time OAuth
+
+OPTIONS
+-------
+--all               Download entire season/album/course/playlist
+--start-from N      Start downloading from episode N
+--file path         Batch download from URL list file
+--login             Interactive browser login (Tencent, Ximalaya)
+--upload-baidu      Upload files to Baidu Netdisk after download
+--baidu-dir path    Custom Baidu Netdisk upload directory
+--cat name          Filter discover playlists by category
+--page N            Browse discover playlists page N
+--endpage M         List pages N..M of discover playlists
+-l <platform>       Save login cookie for a platform
+-s                  Show cookie status for all platforms
+-h, --help          Show this help
+
+PLATFORMS: douyin, xhs, kuaishou, bilibili, youku, tencent,
+           dushu365, ximalaya, wangyiyun(music.163.com)
+"""
+
 def _get_start_from():
     try:
         idx = sys.argv.index("--start-from")
@@ -117,6 +180,9 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("--status", "-s"):
         from cookies import status
         status()
+        return
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(HELP_TEXT)
         return
     if ("--file" in sys.argv or "-f" in sys.argv):
         try:

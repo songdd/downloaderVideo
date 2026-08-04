@@ -101,40 +101,53 @@ def _pw_get_paid_audio(track_id):
 
 
 def get_album_tracks(album_id, page_size=30):
-    """Get ALL tracks from an album using mobile API with pageId pagination."""
     tracks = []
     seen = set()
+
+    # Strategy 1: mobile API
     page_id = 1
-    while True:
-        url = f"https://mobile.ximalaya.com/mobile/v1/album/track?albumId={album_id}&pageId={page_id}&pageSize={page_size}"
+    while page_id <= 50:
+        url = "https://mobile.ximalaya.com/mobile/v1/album/track?albumId={}&pageId={}&pageSize={}".format(album_id, page_id, page_size)
         try:
             r = requests.get(url, headers=H, timeout=30)
             data = r.json()
             if data.get("ret") != 0:
                 break
             d = data.get("data", {})
-            page_tracks = d.get("list", [])
-            if not page_tracks:
-                break
-            for t in page_tracks:
+            for t in d.get("list", []):
                 tid = str(t.get("trackId", ""))
                 if tid and tid not in seen:
                     seen.add(tid)
-                    tracks.append({
-                        "track_id": tid,
-                        "title": t.get("title", ""),
-                        "index": t.get("orderNo", 0),
-                        "duration": t.get("duration", 0),
-                    })
-            max_page = d.get("maxPageId", 1)
-            if page_id >= max_page:
-                break
-            page_id += 1
-            time.sleep(5.0)
-        except Exception as e:
-            print(f"[XM] Album API error: {e}")
-            break
+                    tracks.append({"track_id": tid, "title": t.get("title", ""), "index": t.get("orderNo", 0), "duration": t.get("duration", 0)})
+            mp = d.get("maxPageId", 1)
+            if page_id >= mp: break
+            page_id += 1; time.sleep(0.2)
+        except: break
+
+    if tracks: return tracks
+
+    # Strategy 2: web revision API
+    print("[XM] Mobile API unavailable, trying web fallback...")
+    for rev_page in [1, 2, 3]:
+        try:
+            r = requests.get("https://www.ximalaya.com/revision/album?albumId={}&pageNum={}&pageSize={}".format(album_id, rev_page, page_size), headers=H, timeout=30)
+            data = r.json()
+            if data.get("ret") != 200: break
+            pt = data.get("data", {}).get("tracksInfo", {}).get("tracks", [])
+            if not pt: break
+            nc = 0
+            for t in pt:
+                tid = str(t.get("trackId", ""))
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    tracks.append({"track_id": tid, "title": t.get("title", ""), "index": t.get("index", 0), "duration": t.get("duration", 0)})
+                    nc += 1
+            if nc == 0: break
+            time.sleep(0.3)
+        except: break
+
     return tracks
+
 
 def get_track_info(track_id):
     """Get track audio URL and metadata. Resolves redirect to real CDN URL."""
@@ -187,6 +200,29 @@ def get_track_info(track_id):
     except Exception as e:
         print(f"[XM] Track API error: {e}")
         return None
+
+def _get_album_name(album_id):
+    try:
+        r = requests.get(
+            "https://www.ximalaya.com/revision/album?albumId={}".format(album_id),
+            headers=H, timeout=10)
+        if r.status_code == 200:
+            d = r.json()
+            name = d.get("data", {}).get("mainInfo", {}).get("albumTitle", "")
+            if not name:
+                name = d.get("data", {}).get("tracksInfo", {}).get("tracks", [{}])[0].get("albumTitle", "")
+            if not name:
+                # Try mobile API
+                r2 = requests.get(
+                    "https://mobile.ximalaya.com/mobile/v1/album?albumId={}".format(album_id),
+                    headers=H, timeout=10)
+                if r2.status_code == 200:
+                    name = r2.json().get("data", {}).get("album", {}).get("title", "")
+            return name
+    except Exception:
+        pass
+    return ""
+
 
 def download_audio(media_url, filename, output_dir=None):
     output_dir = output_dir or os.path.join(ROOT, "output")
@@ -252,7 +288,11 @@ def download(link, output_dir=None, download_all=False, start_from=1):
                 continue
             # Check if already downloaded
             safe = lambda s: "".join(c2 if c2.isalnum() or c2 in " .-_" else "_" for c2 in s)[:50].strip(" _")
+            album_name = _get_album_name(album_id)
             out_dir = output_dir or os.path.join(ROOT, "output")
+            if album_name:
+                safe_name = re.sub(r'[<>:"/\\|?*]', "_", album_name)[:40].strip(" _")
+                out_dir = os.path.join(out_dir, safe_name)
             existing = [f for f in (os.listdir(out_dir) if os.path.exists(out_dir) else []) if safe(t["title"])[:30] in f]
             if existing:
                 skipped_existing += 1
@@ -319,6 +359,13 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
     am = re.search(r"/album/(\d+)", link)
     if am: album_id = str(am.group(1))
 
+    # Check for Baidu upload
+    upload_to_baidu = "--upload-baidu" in sys.argv
+    if upload_to_baidu:
+        try:
+            from task_tracker import TaskTracker
+        except: upload_to_baidu = False
+
     print("=" * 50)
     print("[XM] Opening Chrome. Log in, then press Enter.")
     print("=" * 50)
@@ -329,7 +376,6 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
             args=["--start-maximized", "--no-first-run", "--disable-blink-features=AutomationControlled"],
             ignore_default_args=["--enable-automation"], viewport=None)
         page = ctx.new_page()
-        page.set_default_timeout(15000)
         page.add_init_script("""() => {
             Object.defineProperty(navigator, "webdriver", {get: () => undefined});
             Object.defineProperty(navigator, "plugins", {get: () => [1,2,3,4,5]});
@@ -337,71 +383,126 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
         page.goto("https://www.ximalaya.com/", wait_until="domcontentloaded", timeout=30000)
         input()
 
+        # Get track list via API first
+        print("[XM] Getting track list via API...")
+        tracks = get_album_tracks(album_id) if album_id else []
+
+        # If API gives less than expected, try scraping from the album page
         if album_id:
-            print("[XM] Getting track list via API...")
-            tracks = get_album_tracks(album_id)
-        else:
-            tracks = []
+            # Check total count from revision API
+            try:
+                r_check = requests.get(
+                    f"https://www.ximalaya.com/revision/album?albumId={album_id}",
+                    headers=H, timeout=10)
+                total_api = r_check.json().get("data", {}).get("tracksInfo", {}).get("trackTotalCount", 0)
+            except: total_api = 0
+
+            if total_api > len(tracks):
+                print(f"[XM] API returned {len(tracks)}/{total_api} tracks. Scraping album page...")
+                page_tracks = _scrape_tracks_from_page(page, link, total_api)
+                if page_tracks:
+                    # Merge and dedup
+                    seen_ids = {t["track_id"] for t in tracks}
+                    for pt in page_tracks:
+                        if pt["track_id"] not in seen_ids:
+                            seen_ids.add(pt["track_id"])
+                            tracks.append(pt)
+                    print(f"[XM] After scraping: {len(tracks)} tracks total")
+
         if not tracks:
             print("[XM] No tracks found.")
-            ctx.close(); return None
+            ctx.close()
+            return None
+
+        # Create output subdirectory
+        album_name = _get_album_name(album_id) if album_id else ""
+        output = output_dir or os.path.join(ROOT, "output")
+        if album_name:
+            safe_name = re.sub(r'[<>:"/\\|?*]', "_", album_name)[:40].strip(" _")
+            output = os.path.join(output, safe_name)
+        os.makedirs(output, exist_ok=True)
+        print("[XM] Output dir: " + output)
+
+        # Start Baidu upload tracker
+        tracker = None
+        if upload_to_baidu:
+            bd_dir = "/apps/downloaderVideo"
+            try:
+                idx = sys.argv.index("--baidu-dir")
+                bd_dir = sys.argv[idx + 1]
+            except: pass
+            try:
+                from task_tracker import TaskTracker
+                tracker = TaskTracker(remote_dir=bd_dir)
+                tracker.start_upload()
+            except Exception as e:
+                print("[BAIDU] Upload init failed: " + str(e)[:60])
 
         total = len(tracks)
         print("[XM] {} tracks. Capturing and downloading...".format(total))
-        output = output_dir or os.path.join(ROOT, "output")
-        os.makedirs(output, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
         results = []
         ok = 0
         skip = 0
 
-        _out_dir = output_dir or os.path.join(ROOT, "output")
         for i, t in enumerate(tracks):
             if i + 1 < start_from:
                 continue
             tid = t["track_id"]
             title = t["title"]
-            # Check if already downloaded
-            _safe = lambda s: "".join(c2 if c2.isalnum() or c2 in " .-_" else "_" for c2 in s)[:50].strip(" _")
-            _existing = [f for f in (os.listdir(_out_dir) if os.path.exists(_out_dir) else []) if _safe(title)[:30] in f]
-            if _existing:
-                skip += 1
-                continue
             print("\r  [{}/{}] {} ... ".format(i+1, total, title[:30]), end="")
 
-            urls = []
-            def handler(req):
-                u = req.url
-                if "audiopay.cos" in u or ("xmcdn.com" in u and any(e in u for e in [".m4a", ".mp3", ".aac"])):
-                    urls.append(u)
-            page.on("request", handler)
+            au = None
+            captured = []
+            def on_resp(resp):
+                u = resp.url
+                ct = resp.headers.get("content-type", "")
+                if "audio" in ct or any(e in u for e in [".m4a", ".mp3", ".aac"]):
+                    if "xmcdn.com" in u or "audiopay" in u:
+                        captured.append(u)
+            page.on("response", on_resp)
 
             try:
                 page.goto("https://www.ximalaya.com/sound/{}".format(tid),
-                          wait_until="domcontentloaded", timeout=10000)
-                page.wait_for_timeout(2500)
-                page.evaluate("""() => {
-                    var b = document.querySelector("[class*=\\"play\\"]") || document.querySelector("button");
-                    if (b) b.click();
-                }""")
+                          wait_until="domcontentloaded", timeout=15000)
                 page.wait_for_timeout(3000)
+                page.evaluate("""() => {
+                    var sels = ['[class*="play-btn"]', '[class*="playButton"]', '.play-btn', 'button[class*="play"]', '.sound-play'];
+                    for (var i = 0; i < sels.length; i++) {
+                        var el = document.querySelector(sels[i]);
+                        if (el) { el.click(); return 'ok'; }
+                    }
+                    return 'no btn';
+                }""")
+                page.wait_for_timeout(4000)
             except Exception:
-                pass
+                try: page.evaluate("() => window.stop()")
+                except: pass
 
-            page.remove_listener("request", handler)
+            page.remove_listener("response", on_resp)
 
-            if urls:
-                au = urls[0]
+            if captured:
+                au = captured[0]
+            else:
+                try:
+                    au = page.evaluate("""() => {
+                        var a = document.querySelector('audio[src]');
+                        if (a && a.src && a.src.startsWith('http')) return a.src;
+                        return '';
+                    }""")
+                except: pass
+
+            if au and au.startswith("http"):
                 ext = ".m4a"
                 for e in [".m4a", ".mp3", ".aac"]:
-                    if e in au.split("?")[0]:
+                    if e in au.rsplit("?", 1)[0]:
                         ext = e; break
                 safe = lambda s: "".join(c2 if c2.isalnum() or c2 in " .-_" else "_" for c2 in s)[:50].strip(" _")
                 fn = "xm_" + safe(title) + "_" + ts + ext
                 r = download_audio(au, fn, output)
                 if r:
-                    results.append(r)
-                    ok += 1
+                    results.append(r); ok += 1
+                    if tracker: tracker.record(r)
             else:
                 skip += 1
 
@@ -410,27 +511,55 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
             time.sleep(10.0)
 
         print("\n\n[XM] Done: {} downloaded, {} skipped (no audio)".format(ok, skip))
+        if tracker:
+            tracker.wait()
+            tracker.save_log()
         ctx.close()
     return results
 
 
-
-if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser(description="Ximalaya audio downloader")
-    ap.add_argument("link", nargs="?", help="Album/sound URL or track ID")
-    ap.add_argument("--all", action="store_true", help="Download all tracks in album")
-    ap.add_argument("--use-chrome", action="store_true", help="Use Chrome profile for paid tracks")
-    ap.add_argument("--output", "-o", default=None, help="Output dir")
-    args = ap.parse_args()
-    if args.link:
-        link = args.link
-        if not link.startswith("http") and not link.isdigit():
-            link = "https://www.ximalaya.com/sound/" + link
-        download(link, output_dir=args.output, download_all=args.all, start_from=args.start_from)
-    else:
-        link = input("Ximalaya URL or track ID: ").strip()
-        if link:
-            if not link.startswith("http") and not link.isdigit():
-                link = "https://www.ximalaya.com/sound/" + link
-            download(link)
+def _scrape_tracks_from_page(page, album_url, expected_total):
+    """Use Playwright to click through pagination and scrape track IDs."""
+    tracks = []
+    seen_ids = set()
+    try:
+        page.goto(album_url, wait_until="domcontentloaded", timeout=20000)
+        page.wait_for_timeout(5000)
+        for pg in range(20):
+            items = page.evaluate("""() => {
+                var results = [];
+                var links = document.querySelectorAll('a[href*="/sound/"]');
+                links.forEach(function(a) {
+                    var href = a.getAttribute("href");
+                    var parts = href.split("/sound/");
+                    if (parts.length > 1) {
+                        var tid = parts[1].split("?")[0].split("#")[0];
+                        if (tid && /^[0-9]+$/.test(tid)) {
+                            var title = a.textContent.trim() || a.getAttribute("title") || "";
+                            results.push({trackId: tid, title: title});
+                        }
+                    }
+                });
+                return results;
+            }""")
+            for it in items:
+                tid = str(it["trackId"])
+                if tid and tid != "None" and tid not in seen_ids:
+                    seen_ids.add(tid)
+                    tracks.append({"track_id": tid, "title": it.get("title", "")[:60], "index": len(tracks)+1, "duration": 0})
+            if pg % 2 == 0:
+                print("  [scrape] page " + str(pg+1) + ": " + str(len(tracks)) + " tracks so far")
+            try:
+                next_btn = page.locator(".page-next:not(.disabled) .page-link, [class*=next]:not([class*=disabled]) a").first
+                if next_btn:
+                    next_btn.click()
+                    page.wait_for_timeout(3000)
+                else:
+                    break
+            except:
+                break
+            if len(tracks) >= expected_total:
+                break
+    except Exception as e:
+        print("  [scrape] error: " + str(e)[:60])
+    return tracks

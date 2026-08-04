@@ -348,6 +348,7 @@ def download(link, output_dir=None, download_all=False):
         elif ptype == "discover_playlist":
             cat = "全部"
             page = 1
+            end_page = None
             if "--cat" in sys.argv:
                 try:
                     ci = sys.argv.index("--cat"); cat = sys.argv[ci+1]
@@ -356,16 +357,23 @@ def download(link, output_dir=None, download_all=False):
                 try:
                     pi = sys.argv.index("--page"); page = int(sys.argv[pi+1])
                 except: pass
-            playlists, total = list_discover_playlists(session, cat, 35, page)
-            total_pages = (total + 34) // 35
-            print("[WYY] {} of {} playlists (cat: {}, page {}/{}):".format(
-                len(playlists), total, cat, page, total_pages))
-            for pl in playlists:
-                print("  {} -> python run.py https://music.163.com/playlist?id={}".format(pl["name"][:50], pl["id"]))
+            if "--endpage" in sys.argv:
+                try:
+                    ei = sys.argv.index("--endpage"); end_page = int(sys.argv[ei+1])
+                except: pass
+            if end_page is None:
+                end_page = page
+            if end_page < page:
+                end_page = page
+            print("[WYY] Listing pages {} to {} (cat: {}):".format(page, end_page, cat))
+            for pg in range(page, end_page + 1):
+                playlists, total = list_discover_playlists(session, cat, 35, pg)
+                total_pages = (total + 34) // 35
+                print("\n[WYY] Page {}/{} ({} of {} playlists):".format(pg, total_pages, len(playlists), total))
+                for pl in playlists:
+                    print("  {} -> python run.py https://music.163.com/playlist?id={}".format(pl["name"][:50], pl["id"]))
             print("")
-            if page < total_pages:
-                print("[WYY] Next page: python run.py https://music.163.com/#/discover/playlist --cat {} --page {}".format(cat, page+1))
-            print("[WYY] Use --cat <name> --page <N> to browse")
+            print("[WYY] Use --cat <name> --page <N> --endpage <M> to browse a range")
             return None
         elif ptype == "playlist":
             tracks = get_playlist_tracks(pid, session)
