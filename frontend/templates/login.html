@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Login - Media Downloader{% endblock %}
+{% block content %}
+<div style="max-width:700px;margin:0 auto;width:100%">
+  <div class="panel">
+    <h2>Cookie Status</h2>
+    <div id="cookies">Loading...</div>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h2>Quick Login</h2>
+    <p style="font-size:12px;color:#666;margin-bottom:12px">
+      Select a platform, open Chrome browser, scan QR or login, cookies will auto-save.
+    </p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px" id="login-btns">
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h2>Manual Cookie</h2>
+    <p style="font-size:12px;color:#666;margin-bottom:8px">
+      Paste cookie string directly. Format: key1=value1; key2=value2
+    </p>
+    <div style="display:flex;gap:8px">
+      <select id="plat-sel" style="width:auto">
+        <option value="douyin">douyin</option>
+        <option value="xhs">xiaohongshu</option>
+        <option value="kuaishou">kuaishou</option>
+        <option value="bilibili">bilibili</option>
+        <option value="youku">youku</option>
+        <option value="tencent">tencent</option>
+        <option value="wangyiyun">wangyiyun</option>
+        <option value="ximalaya">ximalaya</option>
+      </select>
+      <input type="text" id="manual-cookie" placeholder="key=value; ..." style="flex:1">
+      <button class="btn btn-primary" onclick="saveManual()">Save</button>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h2>Paste Raw Cookies</h2>
+    <p style="font-size:12px;color:#666;margin-bottom:8px">
+      Paste cookie data from Chrome DevTools (F12 - Application - Cookies - select all rows - copy).
+    </p>
+    <textarea id="raw-cookies" placeholder="Paste tab-separated cookie rows here..." style="min-height:120px;font:11px monospace"></textarea>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="parseRawCookies()">Parse &amp; Save</button>
+    </div>
+    <div id="parse-result" style="margin-top:8px;font-size:12px"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var platforms = ["douyin","xhs","kuaishou","bilibili","youku","tencent","dushu","ximalaya","wangyiyun"];
+
+function loadCookies(){
+  fetch('/api/cookies').then(function(r){return r.json()}).then(function(d){
+    var html='';
+    d.forEach(function(c){
+      html+='<div style="padding:6px 0;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f0f0f0">'+
+        '<span style="font-weight:500">'+escHtml(c.name)+'</span>'+
+        '<span style="color:'+(c.has_cookie?'#27ae60':'#e74c3c')+';font-size:12px">'+(c.has_cookie?'Saved':'Missing')+'</span>'+
+      '</div>';
+    });
+    $('cookies').innerHTML=html;
+  }).catch(function(e){
+    $('cookies').innerHTML='<span style="color:#e74c3c">Failed to load - is server running?</span>';
+  });
+}
+
+function buildLoginBtns(){
+  var html='';
+  platforms.forEach(function(p){
+    html+='<button class="btn btn-sm" onclick="doLogin(\''+p+'\')" style="background:#fff;border:1px solid #ddd">Login '+p+'</button>';
+  });
+  $('login-btns').innerHTML=html;
+}
+
+function doLogin(platform){
+  toast('Login '+platform+' - open Chrome and scan QR...');
+  fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:platform})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(d.ok)toast('Cookie saved for '+platform+' ('+d.chars+' chars)');
+      else toast(d.error||'Login failed',false);
+      loadCookies();
+    }).catch(function(e){toast('Login error: '+e.message,false)});
+}
+
+function saveManual(){
+  var platform=$('plat-sel').value;
+  var cookie=$('manual-cookie').value.trim();
+  if(!cookie){toast('No cookie string',false);return}
+  fetch('/api/cookie-save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:platform,cookie:cookie})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(d.ok)toast('Saved for '+platform);
+      else toast('Failed',false);
+      loadCookies();
+    });
+}
+
+function parseRawCookies(){
+  var raw = $('raw-cookies').value.trim();
+  if (!raw) { toast('No data', false); return; }
+  var lines = raw.split('\n').filter(function(l){ return l.trim(); });
+  // Domain -> platform mapping
+  var domainPlatform = {
+    'bilibili.com': 'bilibili', '.bilibili.com': 'bilibili', 'www.bilibili.com': 'bilibili', 'api.bilibili.com': 'bilibili',
+    'douyin.com': 'douyin', 'iesdouyin.com': 'douyin', '.douyin.com': 'douyin',
+    'xiaohongshu.com': 'xhs', 'xhslink.com': 'xhs', '.xiaohongshu.com': 'xhs',
+    'kuaishou.com': 'kuaishou', '.kuaishou.com': 'kuaishou',
+    'youku.com': 'youku', 'v.youku.com': 'youku', '.youku.com': 'youku',
+    'v.qq.com': 'tencent', 'qq.com': 'tencent', '.qq.com': 'tencent',
+    'music.163.com': 'wangyiyun', '.music.163.com': 'wangyiyun',
+    'ximalaya.com': 'ximalaya', '.ximalaya.com': 'ximalaya',
+    'dushu365.com': 'dushu'
+  };
+  // Key cookies each platform actually needs
+  var platformKeys = {
+    'bilibili': ['SESSDATA','bili_jct','DedeUserID','DedeUserID__ckMd5','buvid3','buvid4','bili_ticket','sid'],
+    'douyin': ['sessionid','sessionid_ss','odin_tt','passport_csrf_token'],
+    'xhs': ['web_session','a1','webId','xhsTrackerId'],
+    'kuaishou': ['kuaishou.server.web_st','did','didv','clientid'],
+    'youku': ['P_pck_rm','__ysuid__','xlogin_api_uniter','cookie2'],
+    'tencent': ['v_vuserid','vqq_access_token','vqq_appid','vqq_openid','vqq_refresh_token'],
+    'wangyiyun': ['MUSIC_U','__csrf','os','NMTID'],
+    'ximalaya': ['1&_token','1&uid','xm_grade'],
+    'dushu': []
+  };
+  // Parse and group by platform
+  var byPlatform = {};
+  var skipped = 0;
+  lines.forEach(function(line){
+    var cols = line.split('\t');
+    if (cols.length < 3) { skipped++; return; }
+    var name = cols[0].trim();
+    var value = cols[1].trim();
+    var domain = cols[2].trim();
+    if (!name || !value) return;
+    var platform = domainPlatform[domain] || null;
+    if (!platform) { skipped++; return; }
+    if (!byPlatform[platform]) byPlatform[platform] = [];
+    // Only include whitelisted keys (or all if no whitelist defined)
+    var keys = platformKeys[platform] || null;
+    if (!keys || keys.length===0 || keys.indexOf(name)>=0){
+      byPlatform[platform].push(name + '=' + value);
+    }
+  });
+  var platforms = Object.keys(byPlatform);
+  if (!platforms.length) { toast('No recognized platform cookies found', false); return; }
+  // Build result UI
+  var html = '';
+  platforms.forEach(function(platform){
+    var cookies = byPlatform[platform];
+    var cookieStr = cookies.join('; ');
+    html += '<div style="padding:6px 0;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f0f0f0">'+
+      '<div>'+
+        '<span style="font-weight:500">'+escHtml(platform)+'</span>'+
+        '<span style="font-size:11px;color:#888;margin-left:8px">'+cookies.length+' keys</span>'+
+      '</div>'+
+      '<button class="btn btn-sm btn-primary" onclick="saveParsedCookie(\''+platform+'\',\''+encodeURIComponent(cookieStr)+'\')">Save</button>'+
+    '</div>';
+  });
+  html += '<div style="margin-top:6px;font-size:11px;color:#888">'+platforms.length+' platform(s) ready. '+skipped+' irrelevant lines skipped.</div>';
+  $('parse-result').innerHTML = html;
+  toast('Found cookies for '+platforms.length+' platform(s)');
+}
+
+function saveParsedCookie(platform, encodedCookie){
+  var cookie = decodeURIComponent(encodedCookie);
+  fetch('/api/cookie-save', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({platform: platform, cookie: cookie})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) { toast('Saved for '+platform); loadCookies(); }
+    else toast('Failed', false);
+  });
+}
+
+loadCookies();
+buildLoginBtns();
+</script>
+{% endblock %}

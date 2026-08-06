@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Media Downloader{% endblock %}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font:18px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f5;color:#222}
+nav{background:#1a1a2e;color:#fff;padding:0 20px;display:flex;align-items:center}
+nav .brand{font-size:16px;font-weight:600;padding:12px 0;margin-right:24px}
+nav a{color:#aaa;text-decoration:none;padding:12px 14px;font-size:13px;border-bottom:2px solid transparent;transition:all .2s}
+nav a:hover{color:#fff}
+nav a.active{color:#fff;border-bottom-color:#4a90d9}
+nav .ver{font-size:11px;opacity:.5;margin-left:auto}
+main{max-width:1400px;margin:0 auto;padding:16px;display:flex;gap:16px}
+.left-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px}
+.right-col{width:320px;flex-shrink:0;display:flex;flex-direction:column;gap:16px}
+.panel{background:#fff;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:20px}
+.panel h2{font-size:15px;font-weight:600;margin-bottom:14px;color:#444;text-transform:uppercase;letter-spacing:.5px}
+input,textarea,select,button{font:inherit}
+input[type=text],input[type=number],textarea,select{width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:4px;outline:none}
+input:focus,textarea:focus{border-color:#4a90d9}
+textarea{resize:vertical;min-height:250px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:15px;font-weight:500;transition:background .15s}
+.btn-primary{background:#4a90d9;color:#fff}
+.btn-primary:hover{background:#3a7bc8}
+.btn-danger{background:#e74c3c;color:#fff}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-block{width:100%;justify-content:center}
+.opts{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
+.opts label{font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer}
+.opts input[type=checkbox],.opts input[type=number]{width:auto}
+.opts input[type=number]{width:60px}
+.platform-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;background:#e8f0fe;color:#4a90d9}
+.toast{position:fixed;top:16px;right:16px;padding:10px 16px;border-radius:6px;color:#fff;font-size:13px;z-index:999;animation:fadeIn .3s}
+.toast-success{background:#27ae60}
+.toast-error{background:#e74c3c}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.task-card{border:1px solid #e0e0e0;border-radius:6px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.task-card .tc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px}
+.task-card .tc-name{font-size:13px;font-weight:500;word-break:break-all;flex:1}
+.task-card .tc-status{font-size:11px;margin-left:8px;white-space:nowrap}
+.task-card .tc-meta{font-size:11px;color:#888;margin-bottom:2px}
+.task-card .tc-meta .platform{background:#e8f0fe;color:#4a90d9;padding:1px 6px;border-radius:3px;margin-right:8px}
+.task-card .tc-url{font-size:10px;color:#bbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:2px 0}
+.task-card .progress{height:4px;background:#eee;border-radius:2px;margin:6px 0}
+.task-card .progress div{height:100%;border-radius:2px;transition:width .5s}
+.task-card .tc-actions{display:flex;gap:6px;margin-top:4px}
+.task-card .tc-actions button{padding:3px 10px;font-size:11px;border:1px solid #ddd;background:#fff;border-radius:3px;cursor:pointer}
+.task-card .tc-actions button:hover{background:#f5f5f5}
+.task-card .tc-actions .del{color:#e74c3c;border-color:#e74c3c}
+.task-card .tc-actions .del:hover{background:#fde8e8}
+.file-item{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #f0f0f0;font-size:12px}
+.file-item:hover{background:#f8f8f8}
+.file-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-item .size{color:#999;margin:0 8px;white-space:nowrap}
+.file-item .actions{display:flex;gap:4px}
+.url-item{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid #f0f0f0}
+.url-item .url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Media Downloader</span>
+  <a href="/" class="{{ 'active' if page=='download' else '' }}">Download</a>
+  <a href="/login" class="{{ 'active' if page=='login' else '' }}">Login</a>
+  <span class="ver" id="nav-ver">9 platforms</span>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+<script>
+function $(id){return document.getElementById(id)}
+function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function toast(msg,ok){
+  ok = ok !== false;
+  var t=document.createElement('div');
+  t.className='toast '+(ok?'toast-success':'toast-error');
+  t.textContent=msg;document.body.appendChild(t);
+  setTimeout(function(){t.remove()},3000);
+}
+fetch('/api/ping').then(function(r){return r.json()}).then(function(d){
+  if(d.ok) document.getElementById('nav-ver').textContent='v'+d.version+' | 9 platforms';
+  else document.getElementById('nav-ver').textContent='offline';
+}).catch(function(){document.getElementById('nav-ver').textContent='offline'});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

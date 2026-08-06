@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Download - Media Downloader{% endblock %}
+{% block content %}
+<div class="left-col">
+  <div class="panel">
+    <h2>Download</h2>
+    <input type="text" id="url" placeholder="Paste URL here (auto-detect platform)" oninput="detect()">
+    <div id="detected" style="margin-top:4px;font-size:12px;color:#666"></div>
+    <div id="task-info"></div>
+    <div style="margin-top:8px">
+      <textarea id="batch" placeholder="Or paste multiple URLs (one per line)"></textarea>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="opt-all"> All / Batch</label>
+      <label>From #: <input type="number" id="opt-start" value="1" min="1" style="width:80px"></label>
+        <label><input type="checkbox" id="opt-login"> Login Mode (ximalaya)</label>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn btn-primary btn-block" id="btn-dl" onclick="doDownload()">Download</button>
+      <button class="btn btn-sm" onclick="parseUrls()">Parse</button>
+    </div>
+    <div id="parsed"></div>
+    <div id="url-history" style="margin-top:8px"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Active Tasks</h2>
+    <div id="task-list"><div style="font-size:12px;color:#999">No active tasks</div></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+var activeTasks = {};
+
+function detect(){
+  var url=$('url').value;
+  if(!url)return;
+  fetch('/api/urls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:url})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(d.length){
+        $('detected').innerHTML='<span class="platform-tag">'+escHtml(d[0].platform)+'</span>';
+        fetch('/api/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url})})
+          .then(function(r){return r.json()}).then(function(info){
+            if(info.name){
+              var txt=info.name;
+              if(info.total>0) txt+=' ('+info.total+' items)';
+              $('task-info').textContent=txt;
+            }
+          });
+      } else $('detected').innerHTML='<span style="color:#c33">Unknown</span>';
+    });
+}
+
+function parseUrls(){
+  var text=$('batch').value||$('url').value;
+  if(!text)return;
+  fetch('/api/urls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
+    .then(function(r){return r.json()}).then(function(d){
+      $('parsed').innerHTML=d.map(function(u){return '<div class="url-item"><span class="platform-tag">'+escHtml(u.platform)+'</span><span class="url">'+escHtml(u.url)+'</span></div>';}).join('');
+    });
+}
+
+function doDownload(){
+  var url=$('url').value.trim();
+  if(!url){toast('No URL',false);return}
+  var btn=$('btn-dl');
+  if(btn.disabled)return;
+  btn.disabled=true;btn.textContent='Starting...';
+  var flags={all:$('opt-all').checked,start_from:parseInt($('opt-start').value)||1,login:$('opt-login').checked};
+  function reEnable(){btn.disabled=false;btn.textContent='Download';}
+  fetch('/api/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url})})
+    .then(function(r){return r.json()}).then(function(info){
+      if(info.error){toast(info.error,false);reEnable();return}
+      fetch('/api/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,all:flags.all,start_from:flags.start_from,login:flags.login})})
+        .then(function(r){return r.json()}).then(function(d){
+          if(d.error){toast(d.error,false);reEnable();return}
+          var tid=d.task_id;
+          activeTasks[tid]={name:d.name,platform:d.platform,url:url,total:info.total||0,count:0,status:'pending'};
+          renderTasks();
+          pollTask(tid);
+          toast('Started: '+d.name);
+          // Save to history
+          saveHistory(url, d.name||info.name||'', d.platform||info.platform||'');
+          reEnable();
+        }).catch(function(e){toast('Server error: '+e.message,false);reEnable()});
+    }).catch(function(e){toast('Server error: '+e.message,false);reEnable()});
+}
+
+function pollTask(tid){
+  if(!activeTasks[tid])return;
+  fetch('/api/task/'+tid).then(function(r){return r.json()}).then(function(d){
+    var t=activeTasks[tid];
+    if(!t)return;
+    t.count=d.count||0; t.total=d.total||0; t.status=d.status;
+    t.downloaded=d.downloaded||0; t.files=d.files||[];
+    renderTasks();
+    if(d.status==='running'||d.status==='pending'||d.status==='waiting_login'||d.status==='login_confirmed')setTimeout(function(){pollTask(tid)},1500);
+    else if(d.status==='done'){renderTasks();}
+    else renderTasks();
+  }).catch(function(){delete activeTasks[tid];renderTasks();});
+}
+
+function renderTasks(){
+  var ids=Object.keys(activeTasks).sort(function(a,b){return b-a;});
+  if(!ids.length){$('task-list').innerHTML='<div style="font-size:12px;color:#999">No active tasks</div>';return}
+  var html='';
+  ids.forEach(function(tid){
+    var t=activeTasks[tid];
+    var pct=0;
+    if(t.status==='done'||t.status==='error'||t.status==='cancelled')pct=100;
+    else if(t.status==='waiting_login')pct=5;
+    else if(t.total>0)pct=Math.min(95,Math.round(t.count/t.total*100));
+    else if(t.count>0)pct=Math.min(90,10+t.count*5);
+    else if(t.status==='running'||t.status==='pending')pct=10;
+    var cls=(t.status==='done'?'done':t.status==='error'?'error':t.status==='paused'?'paused':t.status==='cancelled'?'cancelled':'running');
+    var bg=cls=='done'?'#27ae60':cls=='error'?'#e74c3c':cls=='paused'?'#f39c12':cls=='cancelled'?'#999':'#4a90d9';
+    var txt='';
+    if(t.status==='running'){
+      if(t.total>0)txt=t.count+'/'+t.total;
+      else if(t.count>0)txt=t.count+' files';
+      else txt='downloading...';
+    }else if(t.status==='paused')txt='paused | '+t.count+'/'+(t.total||'?');
+    else if(t.status==='done')txt='done ('+(t.downloaded||t.count)+' files)';
+    else if(t.status==='error')txt=t.output||'error';
+    else if(t.status==='cancelled')txt='cancelled';
+    else if(t.status==='waiting_login')txt='waiting for login...';
+    else if(t.status==='login_confirmed')txt='loading tracks...';
+    else txt=t.status;
+    var btns='<button onclick="copyTask('+tid+')" style="border-color:#aaa">Copy</button>';
+    if(t.status==='waiting_login')btns+='<button onclick="confirmLogin('+tid+')" style="background:#27ae60;color:#fff;border-color:#27ae60">I am Logged In - Continue</button>';
+    if(t.status==='running')btns+='<button onclick="pauseTask('+tid+')">Pause</button>';
+    else if(t.status==='paused')btns+='<button onclick="resumeTask('+tid+')">Resume</button>';
+    btns+='<button class="del" onclick="deleteTask('+tid+')">Delete</button>';
+    var urlDisplay=t.url?t.url.substring(0,80):'';
+    html+='<div class="task-card">'+
+      '<div class="tc-header"><span class="tc-name">'+escHtml(t.name)+'</span><span class="tc-status">'+escHtml(txt)+'</span></div>'+
+      '<div class="tc-meta"><span class="platform">'+escHtml(t.platform)+'</span></div>'+
+      (urlDisplay?'<div class="tc-url" title="'+escHtml(t.url)+'">'+escHtml(urlDisplay)+'</div>':'')+
+      '<div class="progress"><div style="width:'+pct+'%;background:'+bg+'"></div></div>'+
+      '<div class="tc-actions">'+btns+'</div>'+
+    '</div>';
+  });
+  $('task-list').innerHTML=html;
+}
+
+function copyTask(tid){
+  var t=activeTasks[tid];
+  if(!t)return;
+  var lines=[
+    'Name: '+t.name,
+    'Platform: '+t.platform,
+    'URL: '+(t.url||''),
+    'Status: '+t.status,
+    'Progress: '+(t.count||0)+'/'+(t.total||0),
+    'Downloaded: '+(t.downloaded||t.count||0)+' files'
+  ];
+  if(t.files&&t.files.length) lines.push('\nFiles:\n'+t.files.join('\n'));
+  var text=lines.join('\n');
+  navigator.clipboard.writeText(text).then(function(){toast('Copied')}).catch(function(){toast('Copy failed',false)});
+}
+
+function confirmLogin(tid){
+  fetch('/api/task/'+tid+'/login-confirm',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok){activeTasks[tid].status='running';renderTasks();pollTask(tid);}
+    else toast('Failed',false);
+  });
+}
+
+function pauseTask(tid){
+  fetch('/api/task/'+tid+'/pause',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok){activeTasks[tid].status='paused';renderTasks();}
+  });
+}
+function resumeTask(tid){
+  fetch('/api/task/'+tid+'/resume',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok){activeTasks[tid].status='running';renderTasks();pollTask(tid);}
+  });
+}
+function deleteTask(tid){
+  var delFiles=confirm('Also delete downloaded files?\n\nOK = delete files too\nCancel = keep files');
+  fetch('/api/task/'+tid+'?delete_files='+(delFiles?'1':'0'),{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){
+    delete activeTasks[tid];renderTasks();
+    if(d.files_deleted>0)toast('Deleted '+d.files_deleted+' files');
+  });
+}
+
+function saveHistory(url, name, platform){
+  var h=JSON.parse(localStorage.getItem('dl_history')||'[]');
+  // Remove duplicate
+  h=h.filter(function(x){return x.url!==url});
+  h.unshift({url:url,name:name,platform:platform,time:Date.now()});
+  if(h.length>10)h=h.slice(0,10);
+  localStorage.setItem('dl_history',JSON.stringify(h));
+  renderHistory();
+}
+function selectHistory(i){
+  var h=JSON.parse(localStorage.getItem('dl_history')||'[]');
+  if(h[i]){$('url').value=h[i].url;detect();}
+}
+function renderHistory(){
+  var h=JSON.parse(localStorage.getItem('dl_history')||'[]');
+  if(!h.length){$('url-history').innerHTML='';return}
+  var html='<div style="font-size:11px;color:#888;margin-bottom:4px">Recent</div>';
+  h.forEach(function(x,i){
+    html+='<div class="url-item" style="cursor:pointer" data-url="'+escHtml(x.url)+'" onclick="selectHistory('+i+')" title="'+escHtml(x.name)+'">'+
+      '<span class="platform-tag">'+escHtml(x.platform)+'</span>'+
+      '<span class="url" style="font-size:11px">'+escHtml(x.url.substring(0,60))+'</span>'+
+      '<span style="font-size:10px;color:#bbb;white-space:nowrap">'+escHtml(x.name||'').substring(0,20)+'</span>'+
+    '</div>';
+  });
+  $('url-history').innerHTML=html;
+}
+function loadTasks(){
+  fetch('/api/tasks').then(function(r){return r.json()}).then(function(d){
+    for(var tid in d){
+      var t=d[tid];
+      if(t.status==='running'||t.status==='pending'||t.status==='waiting_login'||t.status==='login_confirmed'||t.status==='paused'||t.status==='done'||t.status==='error'){
+        activeTasks[parseInt(tid)]={name:t.name,platform:t.platform,url:t.url,count:t.count||0,total:t.total||0,status:t.status};
+        if(t.status!=='paused')pollTask(parseInt(tid));
+      }
+    }
+    renderTasks();
+  });
+}
+
+renderHistory();
+loadTasks();
+</script>
+{% endblock %}

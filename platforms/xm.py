@@ -25,6 +25,15 @@ _COOKIE = load_cookie()
 if _COOKIE:
     H["Cookie"] = _COOKIE
 
+def _reload_cookie():
+    global _COOKIE
+    ck = load_cookie()
+    if ck and ck != _COOKIE:
+        _COOKIE = ck
+        H["Cookie"] = ck
+        return True
+    return False
+
 def parse_url(url):
     """Parse Ximalaya URL. Returns (type, id1, id2) or None."""
     m = re.search(r"/album/(\d+)", url)
@@ -247,7 +256,8 @@ def download_audio(media_url, filename, output_dir=None):
         except: pass
         return None
 
-def download(link, output_dir=None, download_all=False, start_from=1):
+def download(link, output_dir=None, download_all=False, start_from=1, progress_callback=None):
+    _reload_cookie()
     print("[XM] Input: " + link)
     parsed = parse_url(link)
     if not parsed:
@@ -315,7 +325,10 @@ def download(link, output_dir=None, download_all=False, start_from=1):
                         ext = known; break
                 if not ext: ext = ".m4a"
             fn = "xm_" + safe_fn(info["title"]) + "_" + ts + ext
-            results.append(download_audio(info["audio_url"], fn, output_dir))
+            r = download_audio(info["audio_url"], fn, out_dir)
+            results.append(r)
+            if progress_callback and r:
+                progress_callback({"event": "progress", "current": i + 1, "total": total, "file": r, "title": t["title"]})
             if i < total - 1:
                 time.sleep(10)
         ok = sum(1 for r in results if r)
@@ -345,7 +358,7 @@ def download(link, output_dir=None, download_all=False, start_from=1):
         return download_audio(info["audio_url"], fn, output_dir)
 
 
-def _interactive_login_and_download(link, output_dir=None, download_all=True, start_from=1):
+def _interactive_login_and_download(link, output_dir=None, download_all=True, start_from=1, progress_callback=None, web_mode=False):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -367,7 +380,10 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
         except: upload_to_baidu = False
 
     print("=" * 50)
-    print("[XM] Opening Chrome. Log in, then press Enter.")
+    if web_mode:
+        print("[XM] Opening Chrome for interactive download...")
+    else:
+        print("[XM] Opening Chrome. Log in, then press Enter.")
     print("=" * 50)
 
     with sync_playwright() as p:
@@ -381,7 +397,8 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
             Object.defineProperty(navigator, "plugins", {get: () => [1,2,3,4,5]});
         }""")
         page.goto("https://www.ximalaya.com/", wait_until="domcontentloaded", timeout=30000)
-        input()
+        if not web_mode:
+            input("Press Enter after logging in...")
 
         # Get track list via API first
         print("[XM] Getting track list via API...")
@@ -439,6 +456,8 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
                 print("[BAIDU] Upload init failed: " + str(e)[:60])
 
         total = len(tracks)
+        if progress_callback:
+            progress_callback({"event": "init", "total": total})
         print("[XM] {} tracks. Capturing and downloading...".format(total))
         ts = time.strftime("%Y%m%d_%H%M%S")
         results = []
@@ -503,6 +522,8 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
                 if r:
                     results.append(r); ok += 1
                     if tracker: tracker.record(r)
+                    if progress_callback:
+                        progress_callback({"event": "progress", "current": i + 1, "total": total, "file": r, "title": title})
             else:
                 skip += 1
 
@@ -510,7 +531,9 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
                 print("\n  --- {}/{} done, {} downloaded, {} skipped ---".format(i+1, total, ok, skip))
             time.sleep(10.0)
 
-        print("\n\n[XM] Done: {} downloaded, {} skipped (no audio)".format(ok, skip))
+            print("\n\n[XM] Done: {} downloaded, {} skipped (no audio)".format(ok, skip))
+        if progress_callback:
+            progress_callback({"event": "done", "downloaded": ok, "total": total, "skipped": skip})
         if tracker:
             tracker.wait()
             tracker.save_log()

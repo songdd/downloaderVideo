@@ -320,7 +320,7 @@ def _get_batch_name(ptype, pid, session):
     return ""
 
 
-def download(link, output_dir=None, download_all=False):
+def download(link, output_dir=None, download_all=False, progress_callback=None):
     print("[WYY] Input: " + link)
     parsed = parse_url(link)
     if not parsed:
@@ -387,6 +387,8 @@ def download(link, output_dir=None, download_all=False):
             return None
 
         total = len(tracks)
+        if progress_callback:
+            progress_callback({"event": "init", "total": total})
         print("[WYY] {} tracks:".format(total))
         for t in tracks[:5]:
             print("  {}. {} - {} ({}s)".format(

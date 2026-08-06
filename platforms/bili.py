@@ -1,8 +1,43 @@
-import os, re, sys, json, time, requests, threading, subprocess, concurrent.futures
+import os, re, sys, json, time, requests, threading, subprocess, concurrent.futures, hashlib, urllib.parse
 from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 H = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36","Referer":"https://www.bilibili.com/"}
+
+# ---- Wbi signing ----
+_wbi_key = None
+_wbi_ts = 0
+
+def _fetch_wbi_key():
+    global _wbi_key, _wbi_ts
+    if _wbi_key and time.time() - _wbi_ts < 3600:
+        return _wbi_key
+    try:
+        r = requests.get("https://api.bilibili.com/x/web-interface/wbi/index/nav", headers=H, timeout=10)
+        if r.status_code != 200:
+            return None
+        d = r.json().get("data", {}).get("wbi_img", {})
+        img_url = d.get("img_url", "")
+        sub_url = d.get("sub_url", "")
+        if not img_url or not sub_url:
+            return None
+        img_key = img_url.rsplit("/", 1)[-1].split(".")[0]
+        sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0]
+        _wbi_key = (img_key + sub_key)[:32]
+        _wbi_ts = time.time()
+        return _wbi_key
+    except Exception:
+        return None
+
+def _sign_wbi(params):
+    key = _fetch_wbi_key()
+    if not key:
+        return params
+    params["wts"] = str(int(time.time()))
+    keys = sorted(params.keys())
+    qs = "&".join(f"{urllib.parse.quote(str(k))}={urllib.parse.quote(str(params[k]))}" for k in keys)
+    params["w_rid"] = hashlib.md5((qs + key).encode()).hexdigest()
+    return params
 
 def load_cookie():
     try: from cookies import load_cookie as lc; return lc("bilibili")
@@ -25,6 +60,14 @@ def check_cookie_valid(cookie_str):
 def api_get(url, cookie=None):
     h = dict(H); h["Origin"] = "https://www.bilibili.com"
     if cookie: h["Cookie"] = cookie
+    # Add Wbi signing to all x/web-interface and x/player calls
+    if "/x/web-interface/" in url or "/x/player/" in url:
+        parsed = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        params = {k: v[0] for k, v in qs.items()}
+        params = _sign_wbi(params)
+        base = url.split("?")[0]
+        url = base + "?" + urllib.parse.urlencode(params)
     try: r = requests.get(url, headers=h, timeout=15); return r.json() if r.status_code==200 else None
     except: return None
 
@@ -206,7 +249,7 @@ def download_video(url, filename, out_dir=None, cookie=None, retries=5, audio_ur
             if attempt < retries-1: time.sleep(min(5+attempt*3,20))
     return None
 
-def download(link, out_dir=None, cookie=None, start_from=1):
+def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=None):
     cookie = cookie or load_cookie()
     if cookie:
         v, info = check_cookie_valid(cookie)
@@ -227,6 +270,8 @@ def download(link, out_dir=None, cookie=None, start_from=1):
             sn = re.sub(r'[<>:"/\\|?*]','_',info["title"][:40]).strip("_ ").strip() or "season"
             sd = os.path.join(out_dir or os.path.join(ROOT,"output"), sn)
             os.makedirs(sd, exist_ok=True)
+            if progress_callback:
+                progress_callback({"event": "init", "total": len(eps)})
             print("[BILI] " + str(len(eps)) + " episodes -> " + sd + "/")
             eps_to_dl, out = eps, sd
         else: eps_to_dl, out = [info], out_dir
@@ -246,10 +291,15 @@ def download(link, out_dir=None, cookie=None, start_from=1):
             url, audio_url, q = get_best_play_url(True, ep_id=ep.get("ep_id",""), cookie=cookie)
             if not url: continue
             fn = "bili_" + n + "_" + t + "_" + q + "_" + time.strftime("%Y%m%d_%H%M%S") + ".mp4"
-            results.append(download_video(url, fn, out, cookie, audio_url=audio_url))
+            r = download_video(url, fn, out, cookie, audio_url=audio_url)
+            results.append(r)
+            if progress_callback and r:
+                progress_callback({"event": "progress", "current": i + 1, "total": len(eps_to_dl), "file": r, "title": ep.get("title", "")})
             if i < len(eps_to_dl)-1: time.sleep(1)
         if skipped > 0:
             print("[BILI] Skipped " + str(skipped) + " already downloaded")
+        if progress_callback:
+            progress_callback({"event": "done", "downloaded": sum(1 for r in results if r), "total": len(eps_to_dl)})
         if skipped > 0:
             print("[BILI] Skipped " + str(skipped) + " already downloaded")
         return results
@@ -257,11 +307,49 @@ def download(link, out_dir=None, cookie=None, start_from=1):
         info = get_video_info(p["id"], cookie)
         if not info: return None
         bvid = info.get("bvid","") or p["id"]
-        cid = info.get("cid",0) or (info.get("pages",[{}])[0].get("cid",0))
-        url, audio_url, q = get_best_play_url(False, bvid=bvid, cid=cid, aid=info.get("aid"), cookie=cookie)
-        if not url: return None
-        t = re.sub(r'[<>:"/\\|?*]','_',info.get("title","unknown"))[:40]
-        return download_video(url, "bili_"+t+"_"+q+"_"+time.strftime("%Y%m%d_%H%M%S")+".mp4", out_dir, cookie, audio_url=audio_url)
+        pages = info.get("pages", [])
+        if len(pages) > 1:
+            main_title = re.sub(r'[<>:"/\\|?*]','_',info.get("title","unknown"))[:40].strip("_ ").strip()
+            if not main_title:
+                main_title = "bili_" + bvid
+            total = len(pages)
+            if progress_callback:
+                progress_callback({"event": "init", "total": total})
+            vid_dir = os.path.join(out_dir or os.path.join(ROOT,"output"), main_title)
+            os.makedirs(vid_dir, exist_ok=True)
+            print("[BILI] " + str(total) + " parts -> " + vid_dir)
+            results = []
+            skipped = 0
+            for i, page in enumerate(pages):
+                if i + 1 < start_from:
+                    continue
+                pn = str(page.get("page", i+1))
+                pt = re.sub(r'[<>:"/\\|?*]','_',page.get("part","P"+pn))[:35]
+                existing = [f for f in os.listdir(vid_dir) if os.path.isfile(os.path.join(vid_dir, f)) and f.startswith("bili_p"+pn+"_")]
+                if existing:
+                    skipped += 1
+                    continue
+                print("\n[BILI] [" + str(i+1) + "/" + str(total) + "] P" + pn + ": " + page.get("part",""))
+                url, audio_url, q = get_best_play_url(False, bvid=bvid, cid=page.get("cid",0), aid=info.get("aid"), cookie=cookie)
+                if not url: continue
+                fn = "bili_p" + pn + "_" + pt + "_" + q + "_" + time.strftime("%Y%m%d_%H%M%S") + ".mp4"
+                r = download_video(url, fn, vid_dir, cookie, audio_url=audio_url)
+                results.append(r)
+                if progress_callback and r:
+                    progress_callback({"event": "progress", "current": i+1, "total": total, "file": r, "title": page.get("part","")})
+                if i < total-1: time.sleep(1)
+            if skipped > 0:
+                print("[BILI] Skipped " + str(skipped) + " already downloaded")
+            if progress_callback:
+                progress_callback({"event": "done", "downloaded": sum(1 for r in results if r), "total": total})
+            return results
+
+        else:
+            cid = pages[0].get("cid", info.get("cid",0)) if pages else info.get("cid",0)
+            url, audio_url, q = get_best_play_url(False, bvid=bvid, cid=cid, aid=info.get("aid"), cookie=cookie)
+            if not url: return None
+            t = re.sub(r'[<>:"/\\|?*]','_',info.get("title","unknown"))[:40]
+            return download_video(url, "bili_"+t+"_"+q+"_"+time.strftime("%Y%m%d_%H%M%S")+".mp4", out_dir, cookie, audio_url=audio_url)
 
 if __name__ == "__main__":
     import argparse; ap = argparse.ArgumentParser()
