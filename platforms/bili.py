@@ -142,9 +142,16 @@ def get_best_play_url(is_pgc, ep_id=None, bvid=None, cid=None, aid=None, cookie=
     return None, None, None
 
 class _Progress:
-    def __init__(self, t, b, s): self.d, self.t, self.b, self.l, self.s = [0]*4, t, b, threading.Lock(), s
+    def __init__(self, t, b, s, cb=None):
+        self.d, self.t, self.b, self.l, self.s = [0]*4, t, b, threading.Lock(), s
+        self.cb = cb
+        self._last_fire = 0
     def up(self, i, n):
-        with self.l: self.d[i]+=n; self.b.n=sum(self.d); self.b.refresh()
+        with self.l:
+            self.d[i]+=n; self.b.n=sum(self.d); self.b.refresh()
+            if self.cb and time.time() - self._last_fire > 0.5:
+                self.cb({"event": "download_progress", "current": self.b.n, "total": self.t})
+                self._last_fire = time.time()
 
 def _chunk(url, s, e, fp, hd, prog, i, stop):
     h = dict(hd); h["Range"] = "bytes="+str(s)+"-"+str(e)
@@ -155,12 +162,12 @@ def _chunk(url, s, e, fp, hd, prog, i, stop):
             if c: f.write(c); prog.up(i, len(c))
     return i, None
 
-def _download_multi(url, fp, total, hd, threads=4):
+def _download_multi(url, fp, total, hd, threads=4, progress_callback=None):
     stop = threading.Event()
     print("[BILI] " + str(threads) + " threads, " + str(round(total/1024/1024,1)) + " MB")
     try:
         with tqdm(total=total, unit="B", unit_scale=True, desc="BILI") as bar:
-            prog = _Progress(total, bar, stop)
+            prog = _Progress(total, bar, stop, cb=progress_callback)
             with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
                 fs = [ex.submit(_chunk, url, i*(total//threads),
                       total-1 if i==threads-1 else (i+1)*(total//threads)-1,
@@ -182,7 +189,7 @@ def _download_multi(url, fp, total, hd, threads=4):
             os.remove(fp+".part"+str(i))
     return fp
 
-def download_video(url, filename, out_dir=None, cookie=None, retries=5, audio_url=None):
+def download_video(url, filename, out_dir=None, cookie=None, retries=5, audio_url=None, progress_callback=None):
     out_dir = out_dir or os.path.join(ROOT,"output")
     os.makedirs(out_dir, exist_ok=True)
     fp = os.path.join(out_dir, filename)
@@ -193,16 +200,23 @@ def download_video(url, filename, out_dir=None, cookie=None, retries=5, audio_ur
             rh = requests.head(url, headers=h, timeout=15)
             total = int(rh.headers.get("Content-Length",0))
             if total > 10*1024*1024 and "bytes" in rh.headers.get("Accept-Ranges",""):
-                _download_multi(url, fp, total, h, 4)
+                _download_multi(url, fp, total, h, 4, progress_callback=progress_callback)
             else:
                 r = requests.get(url, headers=h, stream=True, timeout=(30,300))
                 total = total or int(r.headers.get("Content-Length",0))
+                _last_prog = 0
                 if total > 0: print("[BILI] Downloading (" + str(round(total/1024/1024,1)) + " MB)...")
                 else: print("[BILI] Downloading (size unknown)...")
+                downloaded = 0
                 with open(fp,"wb") as f:
                     with tqdm(total=total, unit="B", unit_scale=True, desc="BILI") as bar:
                         for c in r.iter_content(1024*1024):
-                            if c: f.write(c); bar.update(len(c))
+                            if c:
+                                f.write(c); bar.update(len(c))
+                                downloaded += len(c)
+                                if progress_callback and time.time() - _last_prog > 0.5:
+                                    progress_callback({"event": "download_progress", "current": downloaded, "total": total})
+                                    _last_prog = time.time()
             actual = os.path.getsize(fp)
             if total > 0 and actual < total*0.99: raise IOError("Incomplete: "+str(actual)+"/"+str(total))
             print("[BILI] Video saved: " + fp)
@@ -270,8 +284,15 @@ def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=No
             sn = re.sub(r'[<>:"/\\|?*]','_',info["title"][:40]).strip("_ ").strip() or "season"
             sd = os.path.join(out_dir or os.path.join(ROOT,"output"), sn)
             os.makedirs(sd, exist_ok=True)
+            init_ep_quality = None
+            if eps:
+                first_ep = eps[0]
+                try:
+                    _, _, init_ep_quality = get_best_play_url(True, ep_id=first_ep.get("ep_id", ""), cookie=cookie)
+                except:
+                    pass
             if progress_callback:
-                progress_callback({"event": "init", "total": len(eps)})
+                progress_callback({"event": "init", "total": len(eps), "quality": init_ep_quality})
             print("[BILI] " + str(len(eps)) + " episodes -> " + sd + "/")
             eps_to_dl, out = eps, sd
         else: eps_to_dl, out = [info], out_dir
@@ -291,10 +312,10 @@ def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=No
             url, audio_url, q = get_best_play_url(True, ep_id=ep.get("ep_id",""), cookie=cookie)
             if not url: continue
             fn = "bili_" + n + "_" + t + "_" + q + "_" + time.strftime("%Y%m%d_%H%M%S") + ".mp4"
-            r = download_video(url, fn, out, cookie, audio_url=audio_url)
+            r = download_video(url, fn, out, cookie, audio_url=audio_url, progress_callback=progress_callback)
             results.append(r)
             if progress_callback and r:
-                progress_callback({"event": "progress", "current": i + 1, "total": len(eps_to_dl), "file": r, "title": ep.get("title", "")})
+                progress_callback({"event": "progress", "current": i + 1, "total": len(eps_to_dl), "file": r, "title": ep.get("title", ""), "quality": q})
             if i < len(eps_to_dl)-1: time.sleep(1)
         if skipped > 0:
             print("[BILI] Skipped " + str(skipped) + " already downloaded")
@@ -313,8 +334,15 @@ def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=No
             if not main_title:
                 main_title = "bili_" + bvid
             total = len(pages)
+            init_quality = None
+            if pages and len(pages) > 1:
+                first_cid = pages[0].get("cid", 0)
+                try:
+                    _, _, init_quality = get_best_play_url(False, bvid=bvid, cid=first_cid, aid=info.get("aid"), cookie=cookie)
+                except:
+                    pass
             if progress_callback:
-                progress_callback({"event": "init", "total": total})
+                progress_callback({"event": "init", "total": total, "quality": init_quality})
             vid_dir = os.path.join(out_dir or os.path.join(ROOT,"output"), main_title)
             os.makedirs(vid_dir, exist_ok=True)
             print("[BILI] " + str(total) + " parts -> " + vid_dir)
@@ -333,10 +361,10 @@ def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=No
                 url, audio_url, q = get_best_play_url(False, bvid=bvid, cid=page.get("cid",0), aid=info.get("aid"), cookie=cookie)
                 if not url: continue
                 fn = "bili_p" + pn + "_" + pt + "_" + q + "_" + time.strftime("%Y%m%d_%H%M%S") + ".mp4"
-                r = download_video(url, fn, vid_dir, cookie, audio_url=audio_url)
+                r = download_video(url, fn, vid_dir, cookie, audio_url=audio_url, progress_callback=progress_callback)
                 results.append(r)
                 if progress_callback and r:
-                    progress_callback({"event": "progress", "current": i+1, "total": total, "file": r, "title": page.get("part","")})
+                    progress_callback({"event": "progress", "current": i+1, "total": total, "file": r, "title": page.get("part",""), "quality": q})
                 if i < total-1: time.sleep(1)
             if skipped > 0:
                 print("[BILI] Skipped " + str(skipped) + " already downloaded")
@@ -349,7 +377,17 @@ def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=No
             url, audio_url, q = get_best_play_url(False, bvid=bvid, cid=cid, aid=info.get("aid"), cookie=cookie)
             if not url: return None
             t = re.sub(r'[<>:"/\\|?*]','_',info.get("title","unknown"))[:40]
-            return download_video(url, "bili_"+t+"_"+q+"_"+time.strftime("%Y%m%d_%H%M%S")+".mp4", out_dir, cookie, audio_url=audio_url)
+            fn = "bili_"+t+"_"+q+"_"+time.strftime("%Y%m%d_%H%M%S")+".mp4"
+            if progress_callback:
+                progress_callback({"event": "init", "total": 1, "quality": q})
+            r = download_video(url, fn, out_dir, cookie, audio_url=audio_url, progress_callback=progress_callback)
+            if progress_callback:
+                if r:
+                    progress_callback({"event": "progress", "current": 1, "total": 1, "file": r, "title": info.get("title",""), "quality": q})
+                    progress_callback({"event": "done", "downloaded": 1, "total": 1, "quality": q})
+                else:
+                    progress_callback({"event": "done", "downloaded": 0, "total": 1})
+            return r
 
 if __name__ == "__main__":
     import argparse; ap = argparse.ArgumentParser()

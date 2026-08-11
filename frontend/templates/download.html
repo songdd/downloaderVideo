@@ -12,7 +12,9 @@
     </div>
     <div class="opts">
       <label><input type="checkbox" id="opt-all"> All / Batch</label>
-      <label>From #: <input type="number" id="opt-start" value="1" min="1" style="width:80px"></label>
+      <label>From #: <input type="number" id="opt-start" value="1" min="1" style="width:60px"></label>
+      <label>To #: <input type="number" id="opt-to" value="" min="1" style="width:60px" placeholder="end"></label>
+      <label>Tracks: <input type="text" id="opt-tracks" value="" style="width:100px" placeholder="3,5,10"></label>
         <label><input type="checkbox" id="opt-login"> Login Mode (ximalaya)</label>
     </div>
     <div style="margin-top:10px;display:flex;gap:8px">
@@ -69,12 +71,15 @@ function doDownload(){
   var btn=$('btn-dl');
   if(btn.disabled)return;
   btn.disabled=true;btn.textContent='Starting...';
+  var toVal=$('opt-to').value;
   var flags={all:$('opt-all').checked,start_from:parseInt($('opt-start').value)||1,login:$('opt-login').checked};
+  if(toVal)flags.to=parseInt(toVal);
+  flags.tracks=$('opt-tracks').value||'';
   function reEnable(){btn.disabled=false;btn.textContent='Download';}
   fetch('/api/info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url})})
     .then(function(r){return r.json()}).then(function(info){
       if(info.error){toast(info.error,false);reEnable();return}
-      fetch('/api/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,all:flags.all,start_from:flags.start_from,login:flags.login})})
+      fetch('/api/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,all:flags.all,start_from:flags.start_from,login:flags.login,to:flags.to,tracks:flags.tracks})})
         .then(function(r){return r.json()}).then(function(d){
           if(d.error){toast(d.error,false);reEnable();return}
           var tid=d.task_id;
@@ -94,8 +99,9 @@ function pollTask(tid){
   fetch('/api/task/'+tid).then(function(r){return r.json()}).then(function(d){
     var t=activeTasks[tid];
     if(!t)return;
-    t.count=d.count||0; t.total=d.total||0; t.status=d.status;
+    t.name=d.name||t.name; t.count=d.count||0; t.total=d.total||0; t.status=d.status;
     t.downloaded=d.downloaded||0; t.files=d.files||[];
+    t.dl_bytes=d.dl_bytes||0; t.dl_total=d.dl_total||0; t.retry_track=d.retry_track||''; t.retry_wait=d.retry_wait||0; t.cmd=d.cmd||t.cmd||'';
     renderTasks();
     if(d.status==='running'||d.status==='pending'||d.status==='waiting_login'||d.status==='login_confirmed')setTimeout(function(){pollTask(tid)},1500);
     else if(d.status==='done'){renderTasks();}
@@ -112,6 +118,8 @@ function renderTasks(){
     var pct=0;
     if(t.status==='done'||t.status==='error'||t.status==='cancelled')pct=100;
     else if(t.status==='waiting_login')pct=5;
+    else if(t.total>1&&t.dl_total>0)pct=Math.min(99,Math.round(((t.count||0)+(t.dl_bytes||0)/(t.dl_total||1))/t.total*100));
+    else if(t.dl_total>0)pct=Math.min(99,Math.round((t.dl_bytes||0)/t.dl_total*100));
     else if(t.total>0)pct=Math.min(95,Math.round(t.count/t.total*100));
     else if(t.count>0)pct=Math.min(90,10+t.count*5);
     else if(t.status==='running'||t.status==='pending')pct=10;
@@ -122,6 +130,14 @@ function renderTasks(){
       if(t.total>0)txt=t.count+'/'+t.total;
       else if(t.count>0)txt=t.count+' files';
       else txt='downloading...';
+      if(t.retry_track){
+        txt='retrying: '+t.retry_track;
+        if(t.retry_wait>0)txt+=' (wait '+Math.round(t.retry_wait/60)+'m)';
+      }
+      if(t.dl_total>0){
+        var mb=function(b){return (b/1024/1024).toFixed(1)+' MB'};
+        txt+=' | '+mb(t.dl_bytes||0)+' / '+mb(t.dl_total);
+      }
     }else if(t.status==='paused')txt='paused | '+t.count+'/'+(t.total||'?');
     else if(t.status==='done')txt='done ('+(t.downloaded||t.count)+' files)';
     else if(t.status==='error')txt=t.output||'error';
@@ -133,12 +149,14 @@ function renderTasks(){
     if(t.status==='waiting_login')btns+='<button onclick="confirmLogin('+tid+')" style="background:#27ae60;color:#fff;border-color:#27ae60">I am Logged In - Continue</button>';
     if(t.status==='running')btns+='<button onclick="pauseTask('+tid+')">Pause</button>';
     else if(t.status==='paused')btns+='<button onclick="resumeTask('+tid+')">Resume</button>';
+    btns+='<button onclick="retryTask('+tid+')" style="background:#f39c12;color:#fff;border-color:#f39c12">Retry</button>';
     btns+='<button class="del" onclick="deleteTask('+tid+')">Delete</button>';
     var urlDisplay=t.url?t.url.substring(0,80):'';
     html+='<div class="task-card">'+
       '<div class="tc-header"><span class="tc-name">'+escHtml(t.name)+'</span><span class="tc-status">'+escHtml(txt)+'</span></div>'+
       '<div class="tc-meta"><span class="platform">'+escHtml(t.platform)+'</span></div>'+
       (urlDisplay?'<div class="tc-url" title="'+escHtml(t.url)+'">'+escHtml(urlDisplay)+'</div>':'')+
+      (t.cmd?'<div class="tc-cmd"><span class="cmd-hint">CLI: </span><code onclick="copyCmd('+tid+')" title="click to copy">'+escHtml(t.cmd)+'</code></div>':'')+
       '<div class="progress"><div style="width:'+pct+'%;background:'+bg+'"></div></div>'+
       '<div class="tc-actions">'+btns+'</div>'+
     '</div>';
@@ -157,6 +175,7 @@ function copyTask(tid){
     'Progress: '+(t.count||0)+'/'+(t.total||0),
     'Downloaded: '+(t.downloaded||t.count||0)+' files'
   ];
+  if(t.cmd)lines.push('Command: '+t.cmd);
   if(t.files&&t.files.length) lines.push('\nFiles:\n'+t.files.join('\n'));
   var text=lines.join('\n');
   navigator.clipboard.writeText(text).then(function(){toast('Copied')}).catch(function(){toast('Copy failed',false)});
@@ -213,12 +232,41 @@ function renderHistory(){
   });
   $('url-history').innerHTML=html;
 }
+function retryTask(tid){
+  var t=activeTasks[tid];
+  if(!t)return;
+  if(t.status==="running"||t.status==="pending"){
+    toast("Already downloading",false);
+    return;
+  }
+  var btn=document.getElementById("btn-dl");
+  if(btn.disabled)return;
+  btn.disabled=true;btn.textContent="Retrying...";
+  fetch("/api/task/"+tid+"/retry",{method:"POST"}).then(function(r){return r.json()}).then(function(d){
+    if(d.error){toast(d.error,false);btn.disabled=false;btn.textContent="Download";return}
+    // Reset same task's progress in-place
+    t.count=0;t.total=t.total||0;t.status="pending";
+    t.dl_bytes=0;t.dl_total=0;t.files=[];t.downloaded=0;
+    renderTasks();
+    pollTask(tid);
+    var msg=d.message||"Retrying - already downloaded files will be skipped";
+    toast(msg);
+    btn.disabled=false;btn.textContent="Download";
+  }).catch(function(e){toast("Retry failed: "+e.message,false);btn.disabled=false;btn.textContent="Download"});
+}
+
+function copyCmd(tid){
+  var t=activeTasks[tid];
+  if(!t||!t.cmd)return;
+  navigator.clipboard.writeText(t.cmd).then(function(){toast('Command copied')}).catch(function(){toast('Copy failed',false)});
+}
+
 function loadTasks(){
   fetch('/api/tasks').then(function(r){return r.json()}).then(function(d){
     for(var tid in d){
       var t=d[tid];
       if(t.status==='running'||t.status==='pending'||t.status==='waiting_login'||t.status==='login_confirmed'||t.status==='paused'||t.status==='done'||t.status==='error'){
-        activeTasks[parseInt(tid)]={name:t.name,platform:t.platform,url:t.url,count:t.count||0,total:t.total||0,status:t.status};
+        activeTasks[parseInt(tid)]={name:t.name,platform:t.platform,url:t.url,count:t.count||0,total:t.total||0,status:t.status,dl_bytes:t.dl_bytes||0,dl_total:t.dl_total||0,retry_track:t.retry_track||'',retry_wait:t.retry_wait||0,cmd:t.cmd||''};
         if(t.status!=='paused')pollTask(parseInt(tid));
       }
     }

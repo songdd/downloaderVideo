@@ -34,6 +34,9 @@ TASKS = _load_tasks()
 TASKS = {int(k): v for k, v in TASKS.items()}
 TASK_ID = max(TASKS.keys()) if TASKS else 0
 
+# Thread references live OUTSIDE TASKS so task dicts stay JSON-serializable
+THREADS = {}
+
 app = Flask(__name__, template_folder=os.path.join(ROOT, "frontend", "templates"))
 VERSION = "2.7"
 
@@ -48,6 +51,24 @@ PLATFORMS = {
     "ximalaya": ["ximalaya.com"],
     "wangyiyun": ["music.163.com"],
 }
+
+def _build_cli_cmd(url, platform, flags=None, total=0):
+    """Build equivalent CLI command for a download task."""
+    flags = flags or {}
+    parts = ["python run.py", url]
+    batch = flags.get("all") or platform in ("ximalaya", "wangyiyun") or total > 1
+    if batch:
+        parts.append("--all")
+    if flags.get("login"):
+        parts.append("--login")
+    if flags.get("start_from", 1) > 1:
+        parts.append("--start-from " + str(flags.get("start_from", 1)))
+    if flags.get("to"):
+        parts.append("--to " + str(flags.get("to")))
+    if flags.get("tracks"):
+        parts.append("--tracks " + str(flags.get("tracks")))
+    return " ".join(parts)
+
 
 def _get_task_name(url, platform):
     name, _ = _get_url_info(url, platform)
@@ -83,7 +104,7 @@ def _get_bili_info(url):
         info = bili.get_video_info(p["id"])
         if info:
             pages = info.get("pages", [])
-            total = len(pages) if len(pages) > 1 else 0
+            total = len(pages) if len(pages) > 1 else (1 if pages else 0)
             return (info.get("title","bilibili")[:60], total)
         return ("bilibili_video", 0)
 
@@ -195,7 +216,9 @@ def run_download(task_id, url, flags):
     def cb(data):
         if data.get("event") == "init":
             TASKS[task_id]["total"] = data.get("total", 0)
-            # Update name with actual count
+            quality = data.get("quality", "")
+            if quality:
+                TASKS[task_id]["name"] = TASKS[task_id]["name"] + " [" + quality + "]"
             if TASKS[task_id]["total"] > 0:
                 TASKS[task_id]["name"] = TASKS[task_id]["name"] + " (" + str(TASKS[task_id]["total"]) + " eps)"
             TASKS[task_id]["_updated"] = time.time()
@@ -204,10 +227,38 @@ def run_download(task_id, url, flags):
             if fp and fp not in TASKS[task_id]["files"]:
                 TASKS[task_id]["files"].append(fp)
                 TASKS[task_id]["count"] = len(TASKS[task_id]["files"])
+            # Update quality in task name (first file's quality)
+            quality = data.get("quality", "")
+            if quality and "[{0}]".format(quality) not in TASKS[task_id]["name"]:
+                TASKS[task_id]["name"] = TASKS[task_id]["name"].split(" (")[0] + " [{0}]".format(quality)
+                if TASKS[task_id]["total"] > 0:
+                    TASKS[task_id]["name"] += " (" + str(TASKS[task_id]["total"]) + " eps)"
+            # Clear byte-level progress since this file is done
+            TASKS[task_id]["dl_bytes"] = 0
+            TASKS[task_id]["dl_total"] = 0
+            TASKS[task_id]["retry_track"] = ""
+            TASKS[task_id]["retry_wait"] = 0
             TASKS[task_id]["_updated"] = time.time()
+        elif data.get("event") == "retry":
+            TASKS[task_id]["retry_track"] = data.get("track", "")
+            TASKS[task_id]["retry_wait"] = data.get("wait", 0)
+            TASKS[task_id]["_updated"] = time.time()
+            return  # skip _save_tasks for retry events
+        elif data.get("event") == "download_progress":
+            TASKS[task_id]["dl_bytes"] = data.get("current", 0)
+            TASKS[task_id]["dl_total"] = data.get("total", 0)
+            TASKS[task_id]["_updated"] = time.time()
+            return  # skip _save_tasks for byte-level events (too frequent)
         elif data.get("event") == "done":
             TASKS[task_id]["status"] = "done"
             TASKS[task_id]["downloaded"] = data.get("downloaded", 0)
+            TASKS[task_id]["dl_bytes"] = 0
+            TASKS[task_id]["dl_total"] = 0
+            quality = data.get("quality", "")
+            if quality and "[{0}]".format(quality) not in TASKS[task_id]["name"]:
+                TASKS[task_id]["name"] = TASKS[task_id]["name"].split(" (")[0] + " [{0}]".format(quality)
+                if TASKS[task_id]["total"] > 0:
+                    TASKS[task_id]["name"] += " (" + str(TASKS[task_id]["total"]) + " eps)"
             TASKS[task_id]["_updated"] = time.time()
         _save_tasks()
         # Check for pause
@@ -263,11 +314,18 @@ def run_download(task_id, url, flags):
                     TASKS[task_id]["status"] = "waiting_login"
                     TASKS[task_id]["_updated"] = time.time()
                     _save_tasks()
+                    print("[XM] Waiting for user to confirm login...", flush=True)
                     while TASKS[task_id].get("status") == "waiting_login":
                         time.sleep(1)
+                        if TASKS[task_id].get("status") == "cancelled":
+                            print("[XM] Task cancelled, closing browser...", flush=True)
+                            ctx.close()
+                            return
                     if TASKS[task_id].get("status") != "login_confirmed":
+                        print("[XM] Login not confirmed, closing browser...", flush=True)
                         ctx.close()
                         return
+                    print("[XM] Login confirmed, starting download...", flush=True)
                     TASKS[task_id]["status"] = "running"
                     TASKS[task_id]["_updated"] = time.time()
                     _save_tasks()
@@ -295,10 +353,11 @@ def run_download(task_id, url, flags):
                         ctx.close()
                         return
                     total = len(tracks)
+                    eff_total = xm._count_effective(tracks, flags.get("start_from", 1), flags.get("to"), flags.get("tracks", ""))
                     if cb:
-                        cb({"event": "init", "total": total})
-                    TASKS[task_id]["total"] = total
-                    TASKS[task_id]["name"] = TASKS[task_id]["name"] + " (" + str(total) + " eps)"
+                        cb({"event": "init", "total": eff_total})
+                    TASKS[task_id]["total"] = eff_total
+                    TASKS[task_id]["name"] = TASKS[task_id]["name"] + " (" + str(eff_total) + " eps)"
                     # Create output directory
                     album_name = xm._get_album_name(album_id) if album_id else ""
                     output = os.path.join(ROOT, "output")
@@ -324,65 +383,105 @@ def run_download(task_id, url, flags):
                             audio_urls[u] = max(cl, 1)
                             print(f"[XM] Captured: {u[:80]}... ({cl/1024:.0f} KB)" if cl else f"[XM] Captured: {u[:80]}...", flush=True)
                     page.on("response", on_response)
+                    # Parse track filter
+                    track_set = None
+                    tracks_str = flags.get("tracks", "")
+                    track_to = flags.get("to")
+                    if tracks_str:
+                        try:
+                            track_set = set(int(x.strip()) for x in tracks_str.split(",") if x.strip().isdigit())
+                        except: pass
                     for i, t in enumerate(tracks):
-                        if i + 1 < flags.get("start_from", 1):
+                        if TASKS[task_id].get("status") == "cancelled":
+                            print("[XM]   Task cancelled, stopping...", flush=True)
+                            ctx.close()
+                            return
+                        idx = i + 1
+                        if idx < flags.get("start_from", 1):
                             continue
-                        print(f"\n[XM] [{i+1}/{total}] Track {t['track_id']}: {t['title'][:40]}", flush=True)
-                        audio_urls.clear()
-                        page.goto(f"https://www.ximalaya.com/sound/{t['track_id']}", wait_until="domcontentloaded", timeout=15000)
-                        page.wait_for_timeout(2000)
-                        clicked = False
-                        for sel in ["[class*=\"play\"]", "button", ".play-btn", ".sound-play-btn"]:
-                            try:
-                                btn = page.query_selector(sel)
-                                if btn:
-                                    btn.click()
-                                    print(f"[XM]   clicked: {sel}", flush=True)
-                                    clicked = True
+                        if track_to and idx > track_to:
+                            break
+                        if track_set is not None and idx not in track_set:
+                            continue
+                        while True:
+                            print(f"\n[XM] [{i+1}/{total}] Track {t['track_id']}: {t['title'][:40]}", flush=True)
+                            audio_urls.clear()
+                            page.goto(f"https://www.ximalaya.com/sound/{t['track_id']}", wait_until="domcontentloaded", timeout=15000)
+                            page.wait_for_timeout(2000)
+                            clicked = False
+                            for sel in ["[class*=\"play\"]", "button", ".play-btn", ".sound-play-btn"]:
+                                try:
+                                    btn = page.query_selector(sel)
+                                    if btn:
+                                        btn.click()
+                                        print(f"[XM]   clicked: {sel}", flush=True)
+                                        clicked = True
+                                        break
+                                except: pass
+                            if not clicked:
+                                try:
+                                    page.evaluate("document.querySelector('audio,[class*=player],[class*=sound]')?.click()")
+                                    print("[XM]   JS fallback click", flush=True)
+                                except: pass
+                            for _ in range(8):
+                                page.wait_for_timeout(1000)
+                                if audio_urls:
                                     break
-                            except: pass
-                        if not clicked:
-                            try:
-                                page.evaluate("document.querySelector('audio,[class*=player],[class*=sound]')?.click()")
-                                print("[XM]   JS fallback click", flush=True)
-                            except: pass
-                        for _ in range(8):
-                            page.wait_for_timeout(1000)
+                            if not audio_urls:
+                                try:
+                                    js_url = page.evaluate("()=>{var a=document.querySelector('audio');return a?a.src:null}")
+                                    if js_url:
+                                        audio_urls[js_url] = 100000
+                                        print(f"[XM]   JS extracted: {js_url[:80]}", flush=True)
+                                except: pass
+                            downloaded_ok = False
                             if audio_urls:
-                                break
-                        if not audio_urls:
-                            try:
-                                js_url = page.evaluate("()=>{var a=document.querySelector('audio');return a?a.src:null}")
-                                if js_url:
-                                    audio_urls[js_url] = 100000
-                                    print(f"[XM]   JS extracted: {js_url[:80]}", flush=True)
-                            except: pass
-                        if audio_urls:
-                            au = max(audio_urls, key=audio_urls.get)
-                            print(f"[XM]   downloading {au[:80]}...", flush=True)
-                            safe = lambda s: re.sub(r'[<>:"/\\|?*]', "_", s)[:60].strip(" _")
-                            fn = "xm_" + safe(t["title"]) + "_" + time.strftime("%Y%m%d_%H%M%S") + ".m4a"
-                            fp = os.path.join(output, fn)
-                            try:
-                                ar = requests.get(au, headers=xm.H, stream=True, timeout=120)
-                                with open(fp, "wb") as wf:
-                                    for chunk in ar.iter_content(1024*1024):
-                                        if chunk: wf.write(chunk)
-                                sz = os.path.getsize(fp)
-                                if sz > 10000:
-                                    results.append(fp)
-                                    print(f"[XM]   saved: {fn} ({sz/1024:.0f} KB)", flush=True)
-                                    if cb:
-                                        cb({"event": "progress", "current": i+1, "total": total, "file": fp, "title": t["title"]})
-                                else:
-                                    os.remove(fp); results.append(None)
-                            except Exception as e:
-                                print(f"[XM]   download error: {e}", flush=True)
-                                results.append(None)
-                        else:
-                            print("[XM]   no audio captured", flush=True)
-                            results.append(None)
-                        time.sleep(2)
+                                au = max(audio_urls, key=audio_urls.get)
+                                print(f"[XM]   downloading {au[:80]}...", flush=True)
+                                safe_fn = lambda s: re.sub(r'[<>:"/\\|?*]', "_", s)[:60].strip(" _")
+                                fn = "xm_" + safe_fn(t["title"]) + "_" + time.strftime("%Y%m%d_%H%M%S") + ".m4a"
+                                fp = os.path.join(output, fn)
+                                try:
+                                    ar = requests.get(au, headers=xm.H, stream=True, timeout=120)
+                                    with open(fp, "wb") as wf:
+                                        for chunk in ar.iter_content(1024*1024):
+                                            if chunk: wf.write(chunk)
+                                    sz = os.path.getsize(fp)
+                                    if sz > 10000 and xm._is_valid_audio(fp):
+                                        results.append(fp)
+                                        downloaded_ok = True
+                                        TASKS[task_id]["retry_track"] = ""
+                                        TASKS[task_id]["retry_wait"] = 0
+                                        print(f"[XM]   saved: {fn} ({sz/1024:.0f} KB)", flush=True)
+                                        if cb:
+                                            cb({"event": "progress", "current": i+1, "total": eff_total, "file": fp, "title": t["title"]})
+                                        xm._retry_wait(reset=True)
+                                    else:
+                                        os.remove(fp)
+                                        print(f"[XM]   invalid content ({sz} bytes), will retry...", flush=True)
+                                except Exception as e:
+                                    print(f"[XM]   download error: {e}, will retry...", flush=True)
+                            else:
+                                print(f"[XM]   no audio captured, will retry...", flush=True)
+                            if not downloaded_ok:
+                                w = xm._retry_wait()
+                                TASKS[task_id]["retry_track"] = t["title"][:30]
+                                TASKS[task_id]["retry_wait"] = w
+                                TASKS[task_id]["_updated"] = time.time()
+                                print(f"[XM]   Waiting {w}s before retrying track {t['track_id']}...", flush=True)
+                                # Cancellable wait
+                                deadline = time.time() + w
+                                while time.time() < deadline:
+                                    if TASKS[task_id].get("status") == "cancelled":
+                                        print("[XM]   Cancelled during retry wait, exiting...", flush=True)
+                                        ctx.close()
+                                        return
+                                    time.sleep(min(5, max(0.5, deadline - time.time())))
+                                TASKS[task_id]["retry_track"] = ""
+                                TASKS[task_id]["retry_wait"] = 0
+                            if downloaded_ok:
+                                time.sleep(2)
+                                break  # success - next track
                     if cb:
                         cb({"event": "done", "downloaded": sum(1 for r in results if r), "total": total})
                     ctx.close()
@@ -394,7 +493,13 @@ def run_download(task_id, url, flags):
                     TASKS[task_id]["_updated"] = time.time()
                     _save_tasks()
             else:
-                xm.download(url, download_all=True, start_from=flags.get("start_from", 1), cb=cb)
+                result = xm.download(url, download_all=True, start_from=flags.get("start_from", 1), progress_callback=cb, to=flags.get("to"), tracks=flags.get("tracks", ""))
+                if result is None:
+                    TASKS[task_id]["status"] = "error"
+                    TASKS[task_id]["output"] = "Download failed - API may be rate-limited, try again later"
+                    TASKS[task_id]["_updated"] = time.time()
+                    _save_tasks()
+                    return
         elif platform == "wangyiyun":
             from platforms import wangyiyun
             wangyiyun.download(url, download_all=True, progress_callback=cb)
@@ -462,11 +567,16 @@ def api_download():
     tid = TASK_ID
     platform = detect_platform(url) or "unknown"
     name = _get_task_name(url, platform)
+    flags = {"start_from": data.get("start_from", 1), "login": data.get("login", False),
+             "all": data.get("all", False), "to": data.get("to"), "tracks": data.get("tracks", "")}
+    cmd = _build_cli_cmd(url, platform, flags)
     TASKS[tid] = {"status": "pending", "url": url, "files": [], "count": 0, "total": 0,
-                  "name": name, "platform": platform, "_updated": time.time()}
-    _save_tasks()
-    flags = {"start_from": data.get("start_from", 1), "login": data.get("login", False)}
-    threading.Thread(target=run_download, args=(tid, url, flags), daemon=True).start()
+                  "name": name, "platform": platform, "_updated": time.time(),
+                  "login": data.get("login", False), "start_from": data.get("start_from", 1),
+                  "to": data.get("to"), "tracks": data.get("tracks", ""), "cmd": cmd}
+    _dl_thread = threading.Thread(target=run_download, args=(tid, url, flags), daemon=True)
+    THREADS[tid] = _dl_thread
+    _dl_thread.start()
     return jsonify({"task_id": tid, "platform": platform, "name": name})
 
 @app.route("/api/tasks")
@@ -551,9 +661,87 @@ def api_task_delete(task_id):
                 os.rmdir(d)
                 dirs_cleaned += 1
         except: pass
+    THREADS.pop(task_id, None)
     del TASKS[task_id]
     _save_tasks()
     return jsonify({"ok": True, "files_deleted": files_deleted, "dirs_cleaned": dirs_cleaned})
+
+
+@app.route("/api/task/<int:task_id>/retry", methods=["POST"])
+def api_task_retry(task_id):
+    if task_id not in TASKS:
+        return jsonify({"error": "Not found"}), 404
+    old = TASKS[task_id]
+    url = old.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "No URL in task"}), 400
+    # Ximalaya in web UI always requires login mode
+    login = True if old.get("platform", "") == "ximalaya" else old.get("login", False)
+    # Count already downloaded files for start_from
+    start_from = old.get("start_from", 1)
+    album_match = re.search(r"/album/(\d+)", url)
+    if album_match:
+        album_name = ""
+        try:
+            from platforms import xm
+            album_name = xm._get_album_name(album_match.group(1))
+        except:
+            pass
+        out_dir = os.path.join(ROOT, "output")
+        if album_name:
+            safe_name = re.sub(r'[<>:"/\\|?*]', "_", album_name)[:40].strip(" _")
+            out_dir = os.path.join(out_dir, safe_name)
+        if os.path.exists(out_dir):
+            valid_files = [f for f in os.listdir(out_dir)
+                          if f.endswith((".m4a", ".mp3", ".aac"))
+                          and os.path.getsize(os.path.join(out_dir, f)) > 10000]
+            if valid_files:
+                start_from = len(valid_files) + 1
+                # Add existing file paths to task so progress bar includes them
+                existing_fps = [os.path.join(out_dir, f) for f in valid_files]
+                print(f"[RETRY] Found {len(valid_files)} existing files in {out_dir}, starting from #{start_from}")
+    # Cancel old download thread if still running
+    old_status = TASKS[task_id].get("status", "")
+    old_thread = THREADS.get(task_id)
+    if old_status in ("running", "pending", "paused", "waiting_login", "login_confirmed") or (old_thread and old_thread.is_alive()):
+        print(f"[RETRY] Cancelling old thread (was {old_status}, alive={old_thread.is_alive() if old_thread else '?'}), waiting for cleanup...", flush=True)
+        TASKS[task_id]["status"] = "cancelled"
+        _save_tasks()
+        if old_thread and old_thread.is_alive():
+            old_thread.join(timeout=15)  # wait up to 15s for old thread to exit
+        else:
+            time.sleep(3)
+    # Reuse same task_id - reset progress, keep metadata
+    TASKS[task_id].update({
+        "status": "pending",
+        "files": [],
+        "count": 0,
+        "dl_bytes": 0,
+        "dl_total": 0,
+        "downloaded": 0,
+        "output": "",
+        "login": login,
+        "_updated": time.time()
+    })
+    # Pre-populate files list with already-downloaded files for correct progress display
+    try:
+        for fp in existing_fps:
+            if fp not in TASKS[task_id]["files"]:
+                TASKS[task_id]["files"].append(fp)
+        TASKS[task_id]["count"] = len(TASKS[task_id]["files"])
+        TASKS[task_id]["total"] = old.get("total", 0)  # preserve total from original task
+    except NameError:
+        pass  # no existing_fps (not ximalaya or no files)
+    _save_tasks()
+    print(f"[RETRY] task {task_id} platform={old.get('platform','?')} login={login} url={url[:80]}", flush=True)
+    flags = {"start_from": start_from, "login": login, "to": old.get("to"), "tracks": old.get("tracks")}
+    TASKS[task_id]["cmd"] = _build_cli_cmd(url, old.get("platform", ""), flags, old.get("total", 0))
+    _save_tasks()
+    t = threading.Thread(target=run_download, args=(task_id, url, flags), daemon=True)
+    THREADS[task_id] = t
+    t.start()
+    return jsonify({"task_id": task_id, "platform": old.get("platform", ""), "name": old.get("name", ""),
+                    "message": "Retrying - already downloaded files will be skipped"})
 
 @app.route("/api/files")
 def api_files():

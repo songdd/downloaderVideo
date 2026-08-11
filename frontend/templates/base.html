@@ -13,6 +13,9 @@ nav a{color:#aaa;text-decoration:none;padding:12px 14px;font-size:13px;border-bo
 nav a:hover{color:#fff}
 nav a.active{color:#fff;border-bottom-color:#4a90d9}
 nav .ver{font-size:11px;opacity:.5;margin-left:auto}
+.reminder-banner{background:#c0392b;color:#fff;overflow:hidden;white-space:nowrap;padding:8px 0;position:relative}
+.reminder-banner .reminder-scroll{display:inline-block;animation:scroll-left 40s linear infinite;font-size:16px;font-weight:700;letter-spacing:1px}
+@keyframes scroll-left{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 main{max-width:1400px;margin:0 auto;padding:16px;display:flex;gap:16px}
 .left-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px}
 .right-col{width:320px;flex-shrink:0;display:flex;flex-direction:column;gap:16px}
@@ -56,6 +59,10 @@ textarea{resize:vertical;min-height:250px}
 .file-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-item .size{color:#999;margin:0 8px;white-space:nowrap}
 .file-item .actions{display:flex;gap:4px}
+.tc-cmd{display:flex;align-items:center;gap:6px;margin:4px 0;background:#1a1a2e;border-radius:4px;padding:4px 8px;cursor:pointer}
+.tc-cmd .cmd-hint{font-size:10px;color:#f39c12;font-weight:700;white-space:nowrap}
+.tc-cmd code{font-size:11px;color:#7ee787;font-family:Consolas,Menlo,monospace;word-break:break-all;line-height:1.5}
+.tc-cmd:hover{background:#23234a}
 .url-item{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid #f0f0f0}
 .url-item .url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
@@ -67,6 +74,15 @@ textarea{resize:vertical;min-height:250px}
   <a href="/login" class="{{ 'active' if page=='login' else '' }}">Login</a>
   <span class="ver" id="nav-ver">9 platforms</span>
 </nav>
+<div class="reminder-banner">
+  <div class="reminder-scroll">
+请确保已登录的账号及存储的 Cookie 有效，能够正常下载当前音视频内容 &nbsp;|&nbsp;
+请确保已登录的账号及存储的 Cookie 有效，能够正常下载当前音视频内容 &nbsp;|&nbsp;
+请确保已登录的账号及存储的 Cookie 有效，能够正常下载当前音视频内容 &nbsp;|&nbsp;
+请确保已登录的账号及存储的 Cookie 有效，能够正常下载当前音视频内容 &nbsp;|&nbsp;
+请确保已登录的账号及存储的 Cookie 有效，能够正常下载当前音视频内容
+  </div>
+</div>
 <main>
 {% block content %}{% endblock %}
 </main>

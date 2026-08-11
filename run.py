@@ -103,7 +103,7 @@ def _get_start_from():
     except (ValueError, IndexError):
         return 1
 
-def _batch_download_from_file(filepath, batch_all=False):
+def _batch_download_from_file(filepath, batch_all=False, _tracker=None):
     if not os.path.exists(filepath):
         print("File not found: " + filepath)
         return
@@ -151,17 +151,16 @@ def _batch_download_from_file(filepath, batch_all=False):
             elif platform == "ximalaya":
                 from platforms import xm
                 if "--login" in sys.argv:
-                    xm._interactive_login_and_download(url, download_all=batch_all,
+                    result = xm._interactive_login_and_download(url, download_all=batch_all,
                         start_from=_get_start_from() if "--start-from" in sys.argv else 1)
-                if _tracker: _tracker.record_result(result)
                 else:
-                    xm.download(url, download_all=batch_all,
+                    result = xm.download(url, download_all=batch_all,
                         start_from=_get_start_from() if "--start-from" in sys.argv else 1)
                 if _tracker: _tracker.record_result(result)
             elif platform == "dushu":
-                from platforms import dushu; dushu.download(url, download_all=batch_all)
+                from platforms import dushu; result = dushu.download(url, download_all=batch_all); _tracker.record_result(result) if _tracker else None
             elif platform == "wangyiyun":
-                from platforms import wangyiyun; wangyiyun.download(url)
+                from platforms import wangyiyun; result = wangyiyun.download(url); _tracker.record_result(result) if _tracker else None
             ok += 1
         except Exception as e:
             print("  ERROR: " + str(e)[:100])
@@ -188,7 +187,7 @@ def main():
         try:
             idx = sys.argv.index("--file") if "--file" in sys.argv else sys.argv.index("-f")
             path = sys.argv[idx + 1]
-            _batch_download_from_file(path, "--all" in sys.argv)
+            _batch_download_from_file(path, "--all" in sys.argv, _tracker)
         except (ValueError, IndexError) as e:
             print("Usage: python run.py --file urls.txt [--all]")
         return

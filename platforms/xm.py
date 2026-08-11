@@ -233,6 +233,72 @@ def _get_album_name(album_id):
     return ""
 
 
+# ---- retry with backoff ----
+_RETRY_WAIT = 30       # seconds, doubles on each failure
+_RETRY_MAX_WAIT = 1800  # max 30 minutes
+
+def _retry_wait(reset=False):
+    global _RETRY_WAIT
+    if reset:
+        _RETRY_WAIT = 30
+        return
+    w = _RETRY_WAIT
+    _RETRY_WAIT = min(_RETRY_WAIT * 2, _RETRY_MAX_WAIT)
+    return w
+
+class _RetryBudget:
+    """Per-track retry backoff: 30s start, doubles to 30min, 24h overall cap."""
+
+    def __init__(self, start=30, max_wait=1800, max_total=86400):
+        self._start = start
+        self._max_wait = max_wait
+        self._max_total = max_total
+        self.reset()
+
+    def next_wait(self):
+        w = self._wait
+        self._wait = min(self._wait * 2, self._max_wait)
+        return w
+
+    def reset(self):
+        self._wait = self._start
+        self._first_fail = 0.0
+
+    def elapsed(self):
+        if not self._first_fail:
+            self._first_fail = time.time()
+        return time.time() - self._first_fail
+
+    def give_up(self):
+        return self.elapsed() > self._max_total
+
+
+def _is_valid_audio(fp):
+    """Check file header is a real audio format (not JS/HTML/font error content)."""
+    try:
+        with open(fp, "rb") as f:
+            head = f.read(12)
+    except Exception:
+        return False
+    if len(head) < 12:
+        return False
+    # M4A / MP4: 'ftyp' at offset 4
+    if head[4:8] == b"ftyp":
+        return True
+    # MP3 with ID3 tag
+    if head[:3] == b"ID3":
+        return True
+    # MP3 / AAC: MPEG sync frame 0xFF Ex/Fx
+    if head[0] == 0xFF and (head[1] & 0xF0) == 0xF0:
+        return True
+    # FLAC / OGG / WAV
+    if head[:4] == b"fLaC" or head[:4] == b"OggS":
+        return True
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return True
+    return False
+
+
 def download_audio(media_url, filename, output_dir=None):
     output_dir = output_dir or os.path.join(ROOT, "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -248,6 +314,11 @@ def download_audio(media_url, filename, output_dir=None):
                 for chunk in r.iter_content(1024*1024):
                     if chunk: f.write(chunk); bar.update(len(chunk))
         actual = os.path.getsize(fp)
+        if actual < 10000 or not _is_valid_audio(fp):
+            print("[XM] INVALID AUDIO ({} bytes, not playable), removing: {}".format(actual, fp))
+            try: os.remove(fp)
+            except: pass
+            return None
         print("[XM] Saved: " + fp + " (" + str(round(actual/1024/1024,1)) + " MB)")
         return fp
     except Exception as e:
@@ -256,7 +327,28 @@ def download_audio(media_url, filename, output_dir=None):
         except: pass
         return None
 
-def download(link, output_dir=None, download_all=False, start_from=1, progress_callback=None):
+def _count_effective(tracks, start_from=1, to=None, tracks_str=""):
+    """How many tracks pass start_from/to/tracks filters (for progress display)."""
+    track_set = None
+    if tracks_str:
+        try:
+            track_set = set(int(x.strip()) for x in tracks_str.split(",") if x.strip().isdigit())
+        except:
+            pass
+    n = 0
+    for i, t in enumerate(tracks):
+        idx = i + 1
+        if idx < start_from:
+            continue
+        if to and idx > to:
+            break
+        if track_set is not None and idx not in track_set:
+            continue
+        n += 1
+    return n
+
+
+def download(link, output_dir=None, download_all=False, start_from=1, progress_callback=None, to=None, tracks=""):
     _reload_cookie()
     print("[XM] Input: " + link)
     parsed = parse_url(link)
@@ -293,8 +385,19 @@ def download(link, output_dir=None, download_all=False, start_from=1, progress_c
 
         results = []
         skipped_existing = 0
+        track_set = None
+        if tracks:
+            try: track_set = set(int(x.strip()) for x in tracks.split(",") if x.strip().isdigit())
+            except: pass
+        eff_total = _count_effective(tracks, start_from, to, tracks)
+
         for i, t in enumerate(tracks):
-            if i + 1 < start_from:
+            idx = i + 1
+            if idx < start_from:
+                continue
+            if to and idx > to:
+                break
+            if track_set is not None and idx not in track_set:
                 continue
             # Check if already downloaded
             safe = lambda s: "".join(c2 if c2.isalnum() or c2 in " .-_" else "_" for c2 in s)[:50].strip(" _")
@@ -307,30 +410,48 @@ def download(link, output_dir=None, download_all=False, start_from=1, progress_c
             if existing:
                 skipped_existing += 1
                 continue
-            print(f"\n[XM] [{i+1}/{total}] Track {t['track_id']}: {t['title'][:40]}")
-            info = get_track_info(t["track_id"])
-            if not info:
-                results.append(None)
-                continue
-            if not info.get("audio_url"):
-                if info.get("paid"):
-                    print("[XM]   (paid track, skipping)")
-                results.append(None)
-                continue
-            ext = info.get("ext", "")
-            if not ext:
-                au = info.get("audio_url", "")
-                for known in [".m4a", ".mp3", ".aac"]:
-                    if known in au.split("?")[0]:
-                        ext = known; break
-                if not ext: ext = ".m4a"
-            fn = "xm_" + safe_fn(info["title"]) + "_" + ts + ext
-            r = download_audio(info["audio_url"], fn, out_dir)
-            results.append(r)
-            if progress_callback and r:
-                progress_callback({"event": "progress", "current": i + 1, "total": total, "file": r, "title": t["title"]})
-            if i < total - 1:
-                time.sleep(10)
+            track_attempt = 0
+            budget = _RetryBudget()
+            while True:
+                track_attempt += 1
+                if track_attempt > 1:
+                    if budget.give_up():
+                        elapsed = budget.elapsed()
+                        print(f"[XM] Giving up on track {t['track_id']} after {elapsed/3600:.1f}h (max 24h)")
+                        results.append(None)
+                        budget.reset()
+                        break
+                    w = budget.next_wait()
+                    elapsed = budget.elapsed()
+                    print(f"[XM] Track {t['track_id']} failed ({elapsed/60:.0f}m elapsed), waiting {w}s before retry {track_attempt}...")
+                    if progress_callback:
+                        progress_callback({"event": "retry", "track": t["title"][:30], "wait": w, "attempt": track_attempt})
+                    time.sleep(w)
+
+                print(f"\n[XM] [{i+1}/{total}] Track {t['track_id']}: {t['title'][:40]}")
+                info = get_track_info(t["track_id"])
+                if not info:
+                    continue
+                if not info.get("audio_url"):
+                    continue
+                ext = info.get("ext", "")
+                if not ext:
+                    au = info.get("audio_url", "")
+                    for known in [".m4a", ".mp3", ".aac"]:
+                        if known in au.split("?")[0]:
+                            ext = known; break
+                    if not ext: ext = ".m4a"
+                fn = "xm_" + safe_fn(info["title"]) + "_" + ts + ext
+                r = download_audio(info["audio_url"], fn, out_dir)
+                if r:
+                    results.append(r)
+                    if progress_callback:
+                        progress_callback({"event": "progress", "current": i + 1, "total": eff_total, "file": r, "title": t["title"]})
+                    budget.reset()
+                    if i < total - 1:
+                        time.sleep(3)
+                    break
+                print(f"[XM]   Download failed for track {t['track_id']}, will retry after delay...")
         ok = sum(1 for r in results if r)
         msg = f"\n[XM] Done: {ok}/{total} downloaded"
         if skipped_existing > 0:
@@ -457,17 +578,29 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
 
         total = len(tracks)
         if progress_callback:
-            progress_callback({"event": "init", "total": total})
+            progress_callback({"event": "init", "total": eff_total})
         print("[XM] {} tracks. Capturing and downloading...".format(total))
         ts = time.strftime("%Y%m%d_%H%M%S")
         results = []
         ok = 0
         skip = 0
 
+        track_set = None
+        if tracks:
+            try: track_set = set(int(x.strip()) for x in tracks.split(",") if x.strip().isdigit())
+            except: pass
+        eff_total = _count_effective(tracks, start_from, to, tracks)
+
         for i, t in enumerate(tracks):
-            if i + 1 < start_from:
+            idx = i + 1
+            if idx < start_from:
+                continue
+            if to and idx > to:
+                break
+            if track_set is not None and idx not in track_set:
                 continue
             tid = t["track_id"]
+            track_retry_count = 0
             title = t["title"]
             print("\r  [{}/{}] {} ... ".format(i+1, total, title[:30]), end="")
 
@@ -523,9 +656,28 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
                     results.append(r); ok += 1
                     if tracker: tracker.record(r)
                     if progress_callback:
-                        progress_callback({"event": "progress", "current": i + 1, "total": total, "file": r, "title": title})
+                        progress_callback({"event": "progress", "current": i + 1, "total": eff_total, "file": r, "title": title})
+                    _retry_wait(reset=True)
+                else:
+                    if track_retry_count >= 5:
+                        print(f"[XM]   Track {tid} failed 5 times, skipping")
+                        skip += 1
+                        _retry_wait(reset=True)
+                        break
+                    print(f"[XM]   Download failed for track {tid}, will retry after delay...")
+                    track_retry_count += 1
+                    time.sleep(30)
+                    continue  # retry this track
             else:
-                skip += 1
+                if track_retry_count >= 5:
+                    print(f"[XM]   No audio captured for track {tid} after 5 attempts, skipping")
+                    skip += 1
+                    _retry_wait(reset=True)
+                    break
+                print(f"[XM]   No audio captured for track {tid}, will retry after delay...")
+                track_retry_count += 1
+                time.sleep(30)
+                continue  # retry this track
 
             if (i + 1) % 50 == 0:
                 print("\n  --- {}/{} done, {} downloaded, {} skipped ---".format(i+1, total, ok, skip))
@@ -533,7 +685,7 @@ def _interactive_login_and_download(link, output_dir=None, download_all=True, st
 
             print("\n\n[XM] Done: {} downloaded, {} skipped (no audio)".format(ok, skip))
         if progress_callback:
-            progress_callback({"event": "done", "downloaded": ok, "total": total, "skipped": skip})
+            progress_callback({"event": "done", "downloaded": ok, "total": eff_total, "skipped": skip})
         if tracker:
             tracker.wait()
             tracker.save_log()
