@@ -4,17 +4,17 @@ Video and audio downloader supporting 9 Chinese platforms, with Web UI, cookie m
 
 ## Quick Start
 
-``powershell
+```powershell
 cd D:\code\downloaderVideo
 pip install -r requirements.txt
 playwright install chromium
-``
+```
 
 ## Web UI (Recommended)
 
-``powershell
+```powershell
 python backend\webui.py
-``
+```
 
 Opens at [http://localhost:5000](http://localhost:5000). Chrome auto-launches on startup.
 
@@ -22,7 +22,7 @@ Opens at [http://localhost:5000](http://localhost:5000). Chrome auto-launches on
 
 | Tab | What it does |
 |-----|-------------|
-| **Download** | Paste URL → auto-detect platform → fetch metadata → download. Multi-P videos / albums auto-batch. Task cards with live progress, pause/resume, copy details. URL history saved locally (last 10). |
+| **Download** | Paste URL → auto-detect platform → fetch metadata → download. Multi-P videos / albums auto-batch. Task cards with live progress, quality tag, CLI command, pause/resume/retry, copy details. URL history saved locally (last 10). |
 | **Login** | Cookie status table. One-click Chrome login per platform. Paste raw cookies from DevTools (auto-detects domain, filters to essential keys). Manual cookie string input. |
 
 ### Download Features
@@ -32,52 +32,73 @@ Opens at [http://localhost:5000](http://localhost:5000). Chrome auto-launches on
 - Multi-P Bilibili videos download all parts into a named subdirectory
 - Bilibili Wbi API signing (automatic key rotation)
 - Ximalaya Login Mode: opens Chrome, wait for user to scan QR, confirm via UI button, then capture audio streams
-- Task progress: real-time progress bar, pause/resume, cancel + clean up files
+- Task progress: real-time progress bar (byte-level for current file), pause/resume, cancel + clean up files
+- Task card shows quality tag (e.g. [1080P]) and equivalent CLI command (click to copy)
+- **Retry** button on every task: reuses same task id, resumes from already-downloaded files (skips existing), preserves start_from/to/tracks
+- Retry guard: prevents retrying a task that is already actively downloading
+- To # / Tracks inputs: download a range or specific episodes (e.g. 3,5,10)
 - Delete task: stops download, removes all files and auto-created directories
+
+### Using the Web UI
+
+1. Open http://localhost:5000, go to the **Download** tab.
+2. Paste a URL into the top field. The platform is detected automatically and metadata (title, item count) is previewed below.
+3. Optional filters (combine freely):
+   - `All / Batch` checkbox: download every episode in the album/season.
+   - `From #` + `To #`: download only episodes in that range (e.g. From 10, To 20).
+   - `Tracks`: download specific episodes, comma separated (e.g. `3,5,10`).
+   - `Login Mode` (Ximalaya): opens Chrome for QR login before capturing audio.
+4. Click **Download**. A task card appears with a live progress bar, byte progress for the current file, quality tag, and the equivalent CLI command (click the dark command line to copy).
+5. Task card actions: **Pause / Resume**, **Retry** (reuses the same task, skips already-downloaded files), **Copy** (details + CLI command + file list), **Delete** (stops and removes files).
+6. The **Login** tab shows cookie status per platform. Use one-click Chrome login, or paste cookies from DevTools.
+
+Progress is shown against the **effective** episode count after filters, not the full album size.
 
 ## CLI Usage
 
 ### Download
 
-``powershell
+```powershell
 python run.py <url>                        # Single item
 python run.py --all <url>                  # Batch: all episodes in album/season
 python run.py --all --start-from 10 <url>  # Start from episode 10
+python run.py --all --to 50 <url>          # Download up to episode 50
+python run.py --all --tracks 3,5,10 <url>  # Download only specific episodes
 python run.py --file urls.txt              # Batch from file (one URL per line)
-``
+```
 
 ### Login
 
-``powershell
+```powershell
 python run.py -l <platform>    # Auto-extract from Chrome or interactive window
 python run.py -s               # Show cookie status
-``
+```
 
 ### Baidu Netdisk
 
-``powershell
+```powershell
 python upload_baidu.py --auth                                         # One-time OAuth
 python run.py --upload-baidu <url>                                    # Upload after download
 python run.py --upload-baidu --baidu-dir "/music/排行榜" <url>         # Custom dir
-``
+```
 
 ## Supported Platforms
 
 | Platform | Module | Cookie | Batch | Notes |
 |----------|--------|--------|-------|-------|
-| **Bilibili** | ili.py | HD/VIP | Auto multi-P & season | Wbi signed, DASH merge, 4K+, subdirectory output |
+| **Bilibili** | bili.py | HD/VIP | Auto multi-P & season | Wbi signed, DASH merge, 4K+, subdirectory output |
 | **NetEase Music** | wangyiyun.py | MUSIC_U | Playlist/album/artist auto | Charts browser, discover, weapi AES |
-| **Ximalaya** | xm.py | Paid tracks | Album (--all) | Login Mode for audio capture, mobile API pagination |
+| **Ximalaya** | xm.py | Paid tracks | Album (--all) | Login Mode for audio capture, mobile API pagination, auto retry with backoff (30s->30min, 24h cap), audio content validation (rejects JS/font error payloads) |
 | **Dushu365** | dushu.py | No | Course (--all) | AES-256-ECB gateway API |
 | **Douyin** | douyin_api.py | Optional | — | Short link resolve, dual API fallback |
 | **Xiaohongshu** | xhs.py | Optional | — | __INITIAL_STATE__ parse |
 | **Kuaishou** | ks_pw.py / ks.py | Optional | — | Playwright primary, page scrape fallback |
 | **Youku** | youku.py | Required | — | Chrome/Firefox, JS inject |
-| **Tencent** | 	encent.py | Required | — | HLS/m3u8 merge |
+| **Tencent** | tencent.py | Required | — | HLS/m3u8 merge |
 
 ## File Structure
 
-``
+```
 downloaderVideo/
 ├── run.py                  # CLI entry point
 ├── backend/
@@ -107,7 +128,7 @@ downloaderVideo/
 ├── output/                 # Downloaded media
 ├── logs/                   # Task logs
 └── tmp/                    # Temporary browser profiles
-``
+```
 
 ## API Reference
 
@@ -123,6 +144,7 @@ downloaderVideo/
 | POST | /api/task/:id/pause | Pause task |
 | POST | /api/task/:id/resume | Resume task |
 | POST | /api/task/:id/login-confirm | Confirm interactive login |
+| POST | /api/task/:id/retry | Retry task (same id, skips already-downloaded files) |
 | DELETE | /api/task/:id | Delete task + files + directories |
 | GET | /api/files | List downloaded files |
 | GET | /api/cookies | Cookie status for all platforms |

@@ -81,6 +81,8 @@ OPTIONS
 -------
 --all               Download entire season/album/course/playlist
 --start-from N      Start downloading from episode N
+--to N              Stop downloading at episode N
+--tracks 3,5,10    Download only the listed episode numbers
 --file path         Batch download from URL list file
 --login             Interactive browser login (Tencent, Ximalaya)
 --upload-baidu      Upload files to Baidu Netdisk after download
@@ -102,6 +104,20 @@ def _get_start_from():
         return int(sys.argv[idx + 1])
     except (ValueError, IndexError):
         return 1
+
+def _get_to():
+    try:
+        idx = sys.argv.index("--to")
+        return int(sys.argv[idx + 1])
+    except (ValueError, IndexError):
+        return None
+
+def _get_tracks():
+    try:
+        idx = sys.argv.index("--tracks")
+        return sys.argv[idx + 1]
+    except (ValueError, IndexError):
+        return ""
 
 def _batch_download_from_file(filepath, batch_all=False, _tracker=None):
     if not os.path.exists(filepath):
@@ -152,10 +168,12 @@ def _batch_download_from_file(filepath, batch_all=False, _tracker=None):
                 from platforms import xm
                 if "--login" in sys.argv:
                     result = xm._interactive_login_and_download(url, download_all=batch_all,
-                        start_from=_get_start_from() if "--start-from" in sys.argv else 1)
+                        start_from=_get_start_from() if "--start-from" in sys.argv else 1,
+                        to=_get_to(), tracks=_get_tracks())
                 else:
                     result = xm.download(url, download_all=batch_all,
-                        start_from=_get_start_from() if "--start-from" in sys.argv else 1)
+                        start_from=_get_start_from() if "--start-from" in sys.argv else 1,
+                        to=_get_to(), tracks=_get_tracks())
                 if _tracker: _tracker.record_result(result)
             elif platform == "dushu":
                 from platforms import dushu; result = dushu.download(url, download_all=batch_all); _tracker.record_result(result) if _tracker else None
@@ -269,9 +287,9 @@ def main():
     elif platform == "ximalaya":
         from platforms import xm
         if "--login" in sys.argv:
-            result = xm._interactive_login_and_download(link, download_all=("--all" in sys.argv), start_from=_get_start_from()); _tracker.record_result(result) if _tracker else None
+            result = xm._interactive_login_and_download(link, download_all=("--all" in sys.argv), start_from=_get_start_from(), to=_get_to(), tracks=_get_tracks()); _tracker.record_result(result) if _tracker else None
         else:
-            result = xm.download(link, download_all=("--all" in sys.argv), start_from=_get_start_from()); _tracker.record_result(result) if _tracker else None
+            result = xm.download(link, download_all=("--all" in sys.argv), start_from=_get_start_from(), to=_get_to(), tracks=_get_tracks()); _tracker.record_result(result) if _tracker else None
 
     elif platform == "wangyiyun":
         from platforms import wangyiyun
