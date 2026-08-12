@@ -130,15 +130,19 @@ function renderTasks(){
       if(t.total>0)txt=t.count+'/'+t.total;
       else if(t.count>0)txt=t.count+' files';
       else txt='downloading...';
-      if(t.retry_track){
-        txt='retrying: '+t.retry_track;
-        if(t.retry_wait>0)txt+=' (wait '+Math.round(t.retry_wait/60)+'m)';
-      }
+        if(t.retry_track){
+          txt='retrying: '+t.retry_track;
+          if(t.retry_wait>0)txt+=' (wait '+Math.round(t.retry_wait/60)+'m)';
+          if(t.retry_reason)txt+=' ['+t.retry_reason+']';
+        }
       if(t.dl_total>0){
         var mb=function(b){return (b/1024/1024).toFixed(1)+' MB'};
         txt+=' | '+mb(t.dl_bytes||0)+' / '+mb(t.dl_total);
       }
-    }else if(t.status==='paused')txt='paused | '+t.count+'/'+(t.total||'?');
+      }else if(t.status==='paused'){
+        txt='paused | '+t.count+'/'+(t.total||'?');
+        if(t.retry_track)txt+=' | last: '+t.retry_track+(t.retry_reason?' ['+t.retry_reason+']':'');
+      }
     else if(t.status==='done')txt='done ('+(t.downloaded||t.count)+' files)';
     else if(t.status==='error')txt=t.output||'error';
     else if(t.status==='cancelled')txt='cancelled';

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Web UI for Multi-Platform Downloader - v2.2"""
 
-import os, sys, json, time, queue, threading, re, glob as _glob, requests
+import os, sys, json, time, queue, threading, re, glob as _glob, requests, subprocess
 from flask import Flask, render_template, request, jsonify, send_file
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -371,10 +371,12 @@ def run_download(task_id, url, flags):
                     def on_response(resp):
                         ct = (resp.headers.get("content-type") or "").lower()
                         u = resp.url
+                        uq = u.split("?")[0].lower()
                         is_audio = (
-                            "audio" in ct or "mpeg" in ct or
-                            ".m4a" in u or ".mp3" in u or ".aac" in u or ".flac" in u or
-                            "xmcdn.com" in u or "audio.xmcdn" in u
+                            "audio" in ct or "mpeg" in ct or "mp2t" in ct or
+                            ".m4a" in uq or ".mp3" in uq or ".aac" in uq or ".flac" in uq or
+                            ".m3u8" in uq or ".ts" in uq or ".ogg" in uq or ".wav" in uq or
+                            "xmcdn.com" in u or "audio.xmcdn" in u or "audiopay" in u
                         )
                         if is_audio and u not in audio_urls:
                             try: cl = int(resp.headers.get("content-length","0"))
@@ -403,16 +405,20 @@ def run_download(task_id, url, flags):
                             break
                         if track_set is not None and idx not in track_set:
                             continue
+                        track_fail = 0
                         while True:
                             print(f"\n[XM] [{i+1}/{total}] Track {t['track_id']}: {t['title'][:40]}", flush=True)
                             audio_urls.clear()
                             page.goto(f"https://www.ximalaya.com/sound/{t['track_id']}", wait_until="domcontentloaded", timeout=15000)
                             page.wait_for_timeout(2000)
                             clicked = False
-                            for sel in ["[class*=\"play\"]", "button", ".play-btn", ".sound-play-btn"]:
+                            for sel in [".play-btn", "[class*=\"play-btn\"]", "[class*=\"playButton\"]",
+                                        "[class*=\"sound-play\"]", ".sound-operate button",
+                                        "button[class*=\"play\"]", ".sound-play", "[class*=\"play\"]"]:
                                 try:
                                     btn = page.query_selector(sel)
                                     if btn:
+                                        btn.scroll_into_view_if_needed(timeout=2000)
                                         btn.click()
                                         print(f"[XM]   clicked: {sel}", flush=True)
                                         clicked = True
@@ -420,62 +426,129 @@ def run_download(task_id, url, flags):
                                 except: pass
                             if not clicked:
                                 try:
-                                    page.evaluate("document.querySelector('audio,[class*=player],[class*=sound]')?.click()")
-                                    print("[XM]   JS fallback click", flush=True)
+                                    page.evaluate("""() => {
+                                        var sels = ['[class*="play-btn"]','[class*="playButton"]','.play-btn','[class*="sound-play"]','button[class*="play"]','.sound-play'];
+                                        for (var i = 0; i < sels.length; i++) {
+                                            var el = document.querySelector(sels[i]);
+                                            if (el) { el.scrollIntoView({block:'center'}); el.click(); return 'ok'; }
+                                        }
+                                        var a = document.querySelector('audio,[class*=player]');
+                                        if (a) { a.click(); return 'audio-fallback'; }
+                                        return 'none';
+                                    }""")
+                                    print("[XM]   JS click fallback", flush=True)
                                 except: pass
-                            for _ in range(8):
+                            # Wait for audio response OR an <audio> element with a real src
+                            for _ in range(10):
                                 page.wait_for_timeout(1000)
                                 if audio_urls:
                                     break
-                            if not audio_urls:
                                 try:
-                                    js_url = page.evaluate("()=>{var a=document.querySelector('audio');return a?a.src:null}")
+                                    js_url = page.evaluate("()=>{var a=document.querySelector('audio');return a&&a.src&&a.src.indexOf('http')===0?a.src:null}")
                                     if js_url:
-                                        audio_urls[js_url] = 100000
+                                        audio_urls.setdefault(js_url, 100000)
                                         print(f"[XM]   JS extracted: {js_url[:80]}", flush=True)
+                                        break
                                 except: pass
                             downloaded_ok = False
+                            last_fail = ""
                             if audio_urls:
-                                au = max(audio_urls, key=audio_urls.get)
+                                # Prefer real audio files over generic xmcdn assets (JS/CSS have no audio ext)
+                                audio_cands = [u for u in audio_urls if re.search(r'\.(m4a|mp3|aac|flac|m3u8|ts|ogg|wav)(\?|$)', u.split("?")[0].lower())]
+                                m3u8s = [u for u in audio_cands if ".m3u8" in u.split("?")[0].lower()]
+                                if m3u8s:
+                                    au = m3u8s[0]
+                                elif audio_cands:
+                                    au = max(audio_cands, key=audio_urls.get)
+                                else:
+                                    au = max(audio_urls, key=audio_urls.get)
                                 print(f"[XM]   downloading {au[:80]}...", flush=True)
                                 safe_fn = lambda s: re.sub(r'[<>:"/\\|?*]', "_", s)[:60].strip(" _")
                                 fn = "xm_" + safe_fn(t["title"]) + "_" + time.strftime("%Y%m%d_%H%M%S") + ".m4a"
                                 fp = os.path.join(output, fn)
+                                sz = 0
                                 try:
-                                    ar = requests.get(au, headers=xm.H, stream=True, timeout=120)
-                                    with open(fp, "wb") as wf:
-                                        for chunk in ar.iter_content(1024*1024):
-                                            if chunk: wf.write(chunk)
-                                    sz = os.path.getsize(fp)
-                                    if sz > 10000 and xm._is_valid_audio(fp):
+                                    h = dict(xm.H)
+                                    try:
+                                        cks = [f"{c['name']}={c['value']}" for c in ctx.cookies() if "ximalaya" in c.get("domain", "")]
+                                        if cks: h["Cookie"] = "; ".join(cks)
+                                    except: pass
+                                    if ".m3u8" in au.split("?")[0].lower():
+                                        ff = os.path.join(ROOT, "bin", "ffmpeg.exe")
+                                        r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", au, "-c", "copy", fp],
+                                                           capture_output=True, timeout=600)
+                                        if os.path.exists(fp): sz = os.path.getsize(fp)
+                                        if r.returncode != 0 or sz <= 10000 or not xm._is_valid_audio(fp):
+                                            last_fail = "HLS merge failed"
+                                            print(f"[XM]   HLS merge failed: {r.stderr.decode('utf-8','ignore')[-120:]}", flush=True)
+                                        else:
+                                            downloaded_ok = True
+                                    else:
+                                        ar = requests.get(au, headers=h, stream=True, timeout=120)
+                                        st = ar.status_code
+                                        ct_r = ar.headers.get("content-type", "")
+                                        with open(fp, "wb") as wf:
+                                            for chunk in ar.iter_content(1024*1024):
+                                                if chunk: wf.write(chunk)
+                                        sz = os.path.getsize(fp)
+                                        if st != 200:
+                                            last_fail = f"HTTP {st} {ct_r}"
+                                        elif sz <= 10000:
+                                            last_fail = f"content too small ({sz} B)"
+                                        elif not xm._is_valid_audio(fp):
+                                            last_fail = f"invalid content ({sz} B)"
+                                        else:
+                                            downloaded_ok = True
+                                        if not downloaded_ok:
+                                            try: os.remove(fp)
+                                            except: pass
+                                    if downloaded_ok:
                                         results.append(fp)
-                                        downloaded_ok = True
                                         TASKS[task_id]["retry_track"] = ""
                                         TASKS[task_id]["retry_wait"] = 0
                                         print(f"[XM]   saved: {fn} ({sz/1024:.0f} KB)", flush=True)
                                         if cb:
                                             cb({"event": "progress", "current": i+1, "total": eff_total, "file": fp, "title": t["title"]})
                                         xm._retry_wait(reset=True)
-                                    else:
-                                        os.remove(fp)
-                                        print(f"[XM]   invalid content ({sz} bytes), will retry...", flush=True)
                                 except Exception as e:
+                                    last_fail = "download error: " + str(e)[:60]
                                     print(f"[XM]   download error: {e}, will retry...", flush=True)
                             else:
+                                last_fail = "no audio captured"
                                 print(f"[XM]   no audio captured, will retry...", flush=True)
                             if not downloaded_ok:
+                                track_fail += 1
                                 w = xm._retry_wait()
                                 TASKS[task_id]["retry_track"] = t["title"][:30]
                                 TASKS[task_id]["retry_wait"] = w
+                                TASKS[task_id]["retry_reason"] = last_fail
+                                TASKS[task_id]["output"] = f"[{idx}] {t['title'][:22]} 失败{track_fail}次: {last_fail}"
                                 TASKS[task_id]["_updated"] = time.time()
-                                print(f"[XM]   Waiting {w}s before retrying track {t['track_id']}...", flush=True)
+                                _save_tasks()
+                                print(f"[XM]   ({last_fail}) Waiting {w}s before retrying track {t['track_id']}...", flush=True)
+                                if track_fail >= 4:
+                                    print(f"[XM]   Track {t['track_id']} failed {track_fail}x ({last_fail}), SKIPPING", flush=True)
+                                    TASKS[task_id]["output"] = f"[{idx}] {t['title'][:22]} 已跳过: {last_fail}"
+                                    TASKS[task_id]["_updated"] = time.time()
+                                    _save_tasks()
+                                    xm._retry_wait(reset=True)
+                                    break  # next track
                                 # Cancellable wait
                                 deadline = time.time() + w
                                 while time.time() < deadline:
-                                    if TASKS[task_id].get("status") == "cancelled":
+                                    st_now = TASKS[task_id].get("status")
+                                    if st_now == "cancelled":
                                         print("[XM]   Cancelled during retry wait, exiting...", flush=True)
                                         ctx.close()
                                         return
+                                    if st_now == "paused":
+                                        while TASKS[task_id].get("status") == "paused":
+                                            time.sleep(1)
+                                        if TASKS[task_id].get("status") == "cancelled":
+                                            print("[XM]   Cancelled while paused, exiting...", flush=True)
+                                            ctx.close()
+                                            return
+                                        deadline = time.time() + w
                                     time.sleep(min(5, max(0.5, deadline - time.time())))
                                 TASKS[task_id]["retry_track"] = ""
                                 TASKS[task_id]["retry_wait"] = 0
