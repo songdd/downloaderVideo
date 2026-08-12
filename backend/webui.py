@@ -405,7 +405,9 @@ def run_download(task_id, url, flags):
                             break
                         if track_set is not None and idx not in track_set:
                             continue
-                        track_fail = 0
+                        # Match CLI behavior: per-track 24h retry budget (Ximalaya rate-limits
+                        # the play API after ~150 downloads, needs long backoff to recover)
+                        budget = xm._RetryBudget()
                         while True:
                             print(f"\n[XM] [{i+1}/{total}] Track {t['track_id']}: {t['title'][:40]}", flush=True)
                             audio_urls.clear()
@@ -475,7 +477,9 @@ def run_download(task_id, url, flags):
                                     except: pass
                                     if ".m3u8" in au.split("?")[0].lower():
                                         ff = os.path.join(ROOT, "bin", "ffmpeg.exe")
-                                        r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", au, "-c", "copy", fp],
+                                        # http_persistent 0 avoids 416 range errors on HLS CDN connection reuse
+                                        r = subprocess.run([ff, "-y", "-loglevel", "error", "-http_persistent", "0",
+                                                            "-i", au, "-c", "copy", fp],
                                                            capture_output=True, timeout=600)
                                         if os.path.exists(fp): sz = os.path.getsize(fp)
                                         if r.returncode != 0 or sz <= 10000 or not xm._is_valid_audio(fp):
@@ -509,7 +513,6 @@ def run_download(task_id, url, flags):
                                         print(f"[XM]   saved: {fn} ({sz/1024:.0f} KB)", flush=True)
                                         if cb:
                                             cb({"event": "progress", "current": i+1, "total": eff_total, "file": fp, "title": t["title"]})
-                                        xm._retry_wait(reset=True)
                                 except Exception as e:
                                     last_fail = "download error: " + str(e)[:60]
                                     print(f"[XM]   download error: {e}, will retry...", flush=True)
@@ -517,22 +520,21 @@ def run_download(task_id, url, flags):
                                 last_fail = "no audio captured"
                                 print(f"[XM]   no audio captured, will retry...", flush=True)
                             if not downloaded_ok:
-                                track_fail += 1
-                                w = xm._retry_wait()
+                                if budget.give_up():
+                                    elapsed = budget.elapsed()
+                                    print(f"[XM]   Giving up on track {t['track_id']} after {elapsed/3600:.1f}h (max 24h)", flush=True)
+                                    TASKS[task_id]["output"] = f"[{idx}] {t['title'][:22]} 已跳过: 24h重试耗尽"
+                                    TASKS[task_id]["_updated"] = time.time()
+                                    _save_tasks()
+                                    break  # next track
+                                w = budget.next_wait()
                                 TASKS[task_id]["retry_track"] = t["title"][:30]
                                 TASKS[task_id]["retry_wait"] = w
                                 TASKS[task_id]["retry_reason"] = last_fail
-                                TASKS[task_id]["output"] = f"[{idx}] {t['title'][:22]} 失败{track_fail}次: {last_fail}"
+                                TASKS[task_id]["output"] = f"[{idx}] {t['title'][:22]} 失败, 等待{w}s重试: {last_fail}"
                                 TASKS[task_id]["_updated"] = time.time()
                                 _save_tasks()
                                 print(f"[XM]   ({last_fail}) Waiting {w}s before retrying track {t['track_id']}...", flush=True)
-                                if track_fail >= 4:
-                                    print(f"[XM]   Track {t['track_id']} failed {track_fail}x ({last_fail}), SKIPPING", flush=True)
-                                    TASKS[task_id]["output"] = f"[{idx}] {t['title'][:22]} 已跳过: {last_fail}"
-                                    TASKS[task_id]["_updated"] = time.time()
-                                    _save_tasks()
-                                    xm._retry_wait(reset=True)
-                                    break  # next track
                                 # Cancellable wait
                                 deadline = time.time() + w
                                 while time.time() < deadline:
@@ -588,6 +590,64 @@ def run_download(task_id, url, flags):
         elif platform == "dushu":
             from platforms import dushu
             dushu.download(url, download_all=True, progress_callback=cb)
+        elif platform == "kuaishou":
+            result = None
+            try:
+                from platforms import ks_pw
+                result = ks_pw.download(url)
+            except Exception as e:
+                print(f"[KS] Playwright path error: {e}", flush=True)
+            if not result:
+                try:
+                    from platforms import ks
+                    result = ks.download(url)
+                except Exception as e:
+                    print(f"[KS] Page scrape path error: {e}", flush=True)
+            if not result:
+                TASKS[task_id]["status"] = "error"
+                TASKS[task_id]["output"] = "Kuaishou download failed - JS-rendered page or HLS capture failed"
+                TASKS[task_id]["_updated"] = time.time()
+                _save_tasks()
+                return
+            # Record the downloaded file so the task card shows the real count
+            if isinstance(result, str):
+                result = [result]
+            for fp in result:
+                if fp and fp not in TASKS[task_id]["files"]:
+                    TASKS[task_id]["files"].append(fp)
+            TASKS[task_id]["count"] = len(TASKS[task_id]["files"])
+            TASKS[task_id]["downloaded"] = len(TASKS[task_id]["files"])
+            TASKS[task_id]["_updated"] = time.time()
+            _save_tasks()
+        elif platform == "douyin":
+            from platforms import douyin_api
+            modal_id, _ = douyin_api.get_modalid_from_share_link(url)
+            if not modal_id:
+                TASKS[task_id]["status"] = "error"
+                TASKS[task_id]["output"] = "Douyin: cannot extract video ID from link"
+                TASKS[task_id]["_updated"] = time.time()
+                _save_tasks()
+                return
+            play_url = douyin_api.get_video_url(
+                f"https://www.douyin.com/user/self?showTab=post&modal_id={modal_id}")
+            if not play_url:
+                TASKS[task_id]["status"] = "error"
+                TASKS[task_id]["output"] = "Douyin: could not get play URL (try saving douyin cookie)"
+                TASKS[task_id]["_updated"] = time.time()
+                _save_tasks()
+                return
+            result = douyin_api.download_video(play_url, play_url.split("/")[-1])
+            if not result:
+                TASKS[task_id]["status"] = "error"
+                TASKS[task_id]["output"] = "Douyin: download failed"
+                TASKS[task_id]["_updated"] = time.time()
+                _save_tasks()
+                return
+            TASKS[task_id]["files"].append(result)
+            TASKS[task_id]["count"] = 1
+            TASKS[task_id]["downloaded"] = 1
+            TASKS[task_id]["_updated"] = time.time()
+            _save_tasks()
         else:
             TASKS[task_id]["status"] = "error"
             TASKS[task_id]["output"] = "Not supported in web UI: " + str(platform)

@@ -3,8 +3,10 @@
 Intercepts CDN video requests from the rendered page.
 """
 
-import os, re, sys, time, requests
+import os, re, sys, time, requests, subprocess, urllib.parse
 from tqdm import tqdm
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
@@ -38,7 +40,11 @@ def get_video_url(share_link):
                 content_type = response.headers.get("content-type", "")
                 if (
                     "video" in content_type
+                    or "mpegurl" in content_type
+                    or "iso.segment" in content_type
                     or ".mp4" in url
+                    or ".m3u8" in url
+                    or ".m4s" in url
                     or "txmov2" in url
                     or "yximgs.com" in url
                     or "ks-cdn" in url.lower()
@@ -79,7 +85,30 @@ def get_video_url(share_link):
         print("[KS-PW] No video URLs captured")
         return None
 
-    # Pick the largest video (highest quality)
+    # Prefer the HLS playlist whose host matches the segments actually fetched
+    m3u8s = [u for u, _ in video_urls if ".m3u8" in u.split("?")[0].lower()]
+    seg_hosts = set()
+    for u, _ in video_urls:
+        if ".m4s" in u.split("?")[0].lower() or ".ts" in u.split("?")[0].lower():
+            try:
+                seg_hosts.add(urllib.parse.urlparse(u).netloc)
+            except Exception:
+                pass
+    best_m3u8 = None
+    for u in m3u8s:
+        try:
+            if urllib.parse.urlparse(u).netloc in seg_hosts:
+                best_m3u8 = u
+                break
+        except Exception:
+            pass
+    if best_m3u8 is None and m3u8s:
+        best_m3u8 = m3u8s[0]
+    if best_m3u8:
+        print(f"[KS-PW] Selected HLS: {best_m3u8[:80]}...")
+        return best_m3u8
+
+    # Otherwise pick the largest direct video (highest quality)
     video_urls.sort(key=lambda x: x[1], reverse=True)
     best_url, best_size = video_urls[0]
     print(f"[KS-PW] Selected: {best_url[:80]}... ({best_size / 1024 / 1024:.1f} MB)")
@@ -94,6 +123,28 @@ def download_video(video_url, filename=None, output_dir=None):
 
     filename = filename or f"ks_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     filepath = os.path.join(output_dir, filename)
+
+    # HLS (m3u8): merge all segments into one mp4 with ffmpeg
+    if ".m3u8" in video_url.split("?")[0].lower():
+        ff = os.path.join(ROOT, "bin", "ffmpeg.exe")
+        print("[KS-PW] HLS detected, merging with ffmpeg...")
+        try:
+            # http_persistent 0 avoids 416 range errors on this CDN's HLS connection reuse
+            r = subprocess.run([ff, "-y", "-loglevel", "error", "-http_persistent", "0",
+                                "-i", video_url, "-c", "copy", filepath],
+                               capture_output=True, timeout=600)
+            if r.returncode == 0 and os.path.exists(filepath) and os.path.getsize(filepath) > 10000:
+                sz = os.path.getsize(filepath)
+                print(f"[KS-PW] Saved: {filepath} ({sz / 1024 / 1024:.1f} MB)")
+                return filepath
+            print(f"[KS-PW] ffmpeg merge failed: {r.stderr.decode('utf-8', 'ignore')[-150:]}")
+        except Exception as e:
+            print(f"[KS-PW] ffmpeg merge error: {e}")
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
+        return None
 
     headers = dict(HEADERS)
     headers["Referer"] = "https://www.kuaishou.com/"

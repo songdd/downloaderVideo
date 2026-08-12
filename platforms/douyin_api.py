@@ -25,8 +25,10 @@ def download_video(url, title):
                         f.write(chunk)
                         bar.update(len(chunk))
         print('[DOWNLOAD] Saved: %s (%d bytes)' % (video_path, os.path.getsize(video_path)))
+        return video_path
     else:
         print('[DOWNLOAD] Failed')
+        return None
 
 def get_video_url(url):
     m = re.search(r'modal_id=(\d+)', url or '')

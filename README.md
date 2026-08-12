@@ -32,8 +32,12 @@ Opens at [http://localhost:5000](http://localhost:5000). Chrome auto-launches on
 - Multi-P Bilibili videos download all parts into a named subdirectory
 - Bilibili Wbi API signing (automatic key rotation)
 - Ximalaya Login Mode: opens Chrome, wait for user to scan QR, confirm via UI button, then capture audio streams
+- Douyin short links: resolve to video ID, fetch play URL via aweme API (cookie optional)
+- Kuaishou: Playwright captures the HLS playlist, bundled `bin/ffmpeg.exe` merges all segments into one mp4
 - Task progress: real-time progress bar (byte-level for current file), pause/resume, cancel + clean up files
 - Task card shows quality tag (e.g. [1080P]) and equivalent CLI command (click to copy)
+- During retries the task card shows the last failure reason (e.g. `HTTP 403`, `invalid content`, `no audio captured`)
+- Ximalaya retries use a per-track 24h budget with 30s->30min backoff; **Pause** takes effect immediately, even mid-wait
 - **Retry** button on every task: reuses same task id, resumes from already-downloaded files (skips existing), preserves start_from/to/tracks
 - Retry guard: prevents retrying a task that is already actively downloading
 - To # / Tracks inputs: download a range or specific episodes (e.g. 3,5,10)
@@ -90,9 +94,9 @@ python run.py --upload-baidu --baidu-dir "/music/排行榜" <url>         # Cust
 | **NetEase Music** | wangyiyun.py | MUSIC_U | Playlist/album/artist auto | Charts browser, discover, weapi AES |
 | **Ximalaya** | xm.py | Paid tracks | Album (--all) | Login Mode for audio capture, mobile API pagination, auto retry with backoff (30s->30min, 24h cap), audio content validation (rejects JS/font error payloads) |
 | **Dushu365** | dushu.py | No | Course (--all) | AES-256-ECB gateway API |
-| **Douyin** | douyin_api.py | Optional | — | Short link resolve, dual API fallback |
+| **Douyin** | douyin_api.py | Optional | — | Short link resolve, aweme API (Web UI + CLI) |
 | **Xiaohongshu** | xhs.py | Optional | — | __INITIAL_STATE__ parse |
-| **Kuaishou** | ks_pw.py / ks.py | Optional | — | Playwright primary, page scrape fallback |
+| **Kuaishou** | ks_pw.py / ks.py | Optional | — | Playwright HLS capture + ffmpeg merge, page scrape fallback (Web UI + CLI) |
 | **Youku** | youku.py | Required | — | Chrome/Firefox, JS inject |
 | **Tencent** | tencent.py | Required | — | HLS/m3u8 merge |
 
