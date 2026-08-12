@@ -274,6 +274,10 @@ def download(link, out_dir=None, cookie=None, start_from=1, progress_callback=No
     if "b23.tv" in link: url = get_redirect(link) or url
     p = parse_url(url)
     if not p: print("[BILI] Cannot parse URL"); return None
+    # Normalize output dir before any os.listdir() - single-episode seasons
+    # used to pass None here and crash with "expected str ... not NoneType"
+    out_dir = out_dir or os.path.join(ROOT, "output")
+    os.makedirs(out_dir, exist_ok=True)
     print("[BILI] Type=" + p["type"])
     if p["type"] in ("ep","ss"):
         info = get_bangumi_info(ep_id=p["id"] if p["type"]=="ep" else None,
