@@ -30,6 +30,7 @@ Opens at [http://localhost:5000](http://localhost:5000). Chrome auto-launches on
 - Auto-detect platform from URL
 - Pre-fetch metadata (title, episode count) before download starts
 - Multi-P Bilibili videos download all parts into a named subdirectory
+- Bilibili single-episode seasons / movies download as a single file
 - Bilibili Wbi API signing (automatic key rotation)
 - Ximalaya Login Mode: opens Chrome, wait for user to scan QR, confirm via UI button, then capture audio streams
 - Douyin short links: resolve to video ID, fetch play URL via aweme API (cookie optional)
@@ -90,7 +91,7 @@ python run.py --upload-baidu --baidu-dir "/music/排行榜" <url>         # Cust
 
 | Platform | Module | Cookie | Batch | Notes |
 |----------|--------|--------|-------|-------|
-| **Bilibili** | bili.py | HD/VIP | Auto multi-P & season | Wbi signed, DASH merge, 4K+, subdirectory output |
+| **Bilibili** | bili.py | HD/VIP | Auto multi-P & season | Wbi signed, DASH merge, 4K+, multi-P / single-episode season output |
 | **NetEase Music** | wangyiyun.py | MUSIC_U | Playlist/album/artist auto | Charts browser, discover, weapi AES |
 | **Ximalaya** | xm.py | Paid tracks | Album (--all) | Login Mode for audio capture, mobile API pagination, auto retry with backoff (30s->30min, 24h cap), audio content validation (rejects JS/font error payloads) |
 | **Dushu365** | dushu.py | No | Course (--all) | AES-256-ECB gateway API |
