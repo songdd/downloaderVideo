@@ -1,0 +1,10 @@
+{
+  "app_id": "YOUR_BAIDU_APP_ID",
+  "app_key": "YOUR_BAIDU_APP_KEY",
+  "secret_key": "YOUR_BAIDU_SECRET_KEY",
+  "sign_key": "YOUR_BAIDU_SIGN_KEY",
+  "access_token": "",
+  "refresh_token": "",
+  "upload_dir": "/apps/downloaderVideo",
+  "auto_upload": false
+}

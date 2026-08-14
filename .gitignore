@@ -14,6 +14,10 @@ __pycache__/
 cookies/*.json
 !cookies/.gitkeep
 
+# Baidu cloud credentials (contains live access/refresh tokens - never commit)
+config.json
+config.local.json
+
 # Chrome profile
 tmp/chrome_login/
 tmp/tencent_profile/

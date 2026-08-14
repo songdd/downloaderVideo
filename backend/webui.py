@@ -752,48 +752,52 @@ def api_task_login_confirm(task_id):
 @app.route("/api/task/<int:task_id>", methods=["DELETE"])
 def api_task_delete(task_id):
     if task_id not in TASKS: return jsonify({"error": "Not found"}), 404
-    # Cancel the task first
+    delete_files = request.args.get("delete_files", "0") == "1"
+    # Cancel the task first, and wait for its thread to stop writing files
     TASKS[task_id]["status"] = "cancelled"
     TASKS[task_id]["_updated"] = time.time()
     _save_tasks()
-    # Collect all directories to scan for partial files
+    t = THREADS.get(task_id)
+    if t and t.is_alive():
+        t.join(timeout=15)
     out_root = os.path.join(ROOT, "output")
-    dirs_to_clean = set()
     files_deleted = 0
-    # Delete recorded files
-    for fp in TASKS[task_id].get("files", []):
-        if os.path.exists(fp):
+    dirs_cleaned = 0
+    if delete_files:
+        # Delete ONLY this task's recorded files plus their temp/partial
+        # artifacts. Never delete unrelated files in the same directory:
+        # other tasks may share it (e.g. single videos in output/, or a
+        # re-downloaded album dir).
+        dirs_touched = set()
+        for fp in TASKS[task_id].get("files", []):
+            if not fp or not os.path.exists(fp):
+                continue
             try:
                 os.remove(fp)
                 files_deleted += 1
-                dirs_to_clean.add(os.path.dirname(fp))
+                dirs_touched.add(os.path.dirname(fp))
             except: pass
-    # Also scan each directory for any remaining related files (partial downloads, temp files)
-    for d in list(dirs_to_clean):
-        if os.path.isdir(d):
+            base = fp
+            for pat in [base + ".audio.m4s", base + ".merged.mp4"] + \
+                       [base + ".part" + str(i) for i in range(16)]:
+                if os.path.exists(pat):
+                    try:
+                        os.remove(pat)
+                        files_deleted += 1
+                    except: pass
+        # Clean up directories that became empty (deepest first)
+        all_dirs = set()
+        for d in dirs_touched:
+            p = d
+            while p and p != out_root and os.path.commonpath([p, out_root]) == out_root:
+                all_dirs.add(p)
+                p = os.path.dirname(p)
+        for d in sorted(all_dirs, key=lambda x: -len(x)):
             try:
-                for fn in os.listdir(d):
-                    fp = os.path.join(d, fn)
-                    if os.path.isfile(fp):
-                        try:
-                            os.remove(fp)
-                            files_deleted += 1
-                        except: pass
+                if os.path.isdir(d) and not os.listdir(d):
+                    os.rmdir(d)
+                    dirs_cleaned += 1
             except: pass
-    # Clean up empty directories (deepest first)
-    dirs_cleaned = 0
-    all_dirs = set()
-    for d in dirs_to_clean:
-        p = d
-        while p and p != out_root and os.path.commonpath([p, out_root]) == out_root:
-            all_dirs.add(p)
-            p = os.path.dirname(p)
-    for d in sorted(all_dirs, key=lambda x: -len(x)):
-        try:
-            if os.path.isdir(d) and not os.listdir(d):
-                os.rmdir(d)
-                dirs_cleaned += 1
-        except: pass
     THREADS.pop(task_id, None)
     del TASKS[task_id]
     _save_tasks()

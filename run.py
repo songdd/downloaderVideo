@@ -201,13 +201,23 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print(HELP_TEXT)
         return
+
+    # Task tracker for Baidu upload (created once, shared by all download paths)
+    _tracker = TaskTracker() if "--upload-baidu" in sys.argv else None
+
     if ("--file" in sys.argv or "-f" in sys.argv):
         try:
             idx = sys.argv.index("--file") if "--file" in sys.argv else sys.argv.index("-f")
             path = sys.argv[idx + 1]
+            if _tracker:
+                _tracker.start_upload()
             _batch_download_from_file(path, "--all" in sys.argv, _tracker)
         except (ValueError, IndexError) as e:
             print("Usage: python run.py --file urls.txt [--all]")
+        finally:
+            if _tracker:
+                _tracker.wait()
+                _tracker.save_log()
         return
 
     link = None
@@ -228,16 +238,8 @@ def main():
     if not platform:
         print(f"Unknown platform. Supported: {', '.join(PLATFORMS.keys())}")
 
-    # Task tracker for upload
-    _tracker = TaskTracker() if "--upload-baidu" in sys.argv else None
     if _tracker:
         _tracker.start_upload()
-        print(f"  Douyin: https://v.douyin.com/xxxx/")
-        print(f"  XHS:     http://xhslink.com/xxxx")
-        print(f"  KS:      https://v.kuaishou.com/xxxx")
-        print(f"  Bilibili: https://b23.tv/xxxx  or  https://www.bilibili.com/video/BVxxx")
-        print(f"  Youku:    https://v.youku.com/v_show/id_XXXXX.html")
-        print(f"  Tencent:  https://v.qq.com/x/page/xxxxx.html")
 
     print(f"Detected: {platform}")
     print("=" * 50)

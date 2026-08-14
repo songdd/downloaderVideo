@@ -1,4 +1,4 @@
-﻿# Multi-Platform Media Downloader
+# Multi-Platform Media Downloader
 
 Video and audio downloader supporting 9 Chinese platforms, with Web UI, cookie management, and Baidu Netdisk upload.
 
@@ -86,6 +86,11 @@ python upload_baidu.py --auth                                         # One-time
 python run.py --upload-baidu <url>                                    # Upload after download
 python run.py --upload-baidu --baidu-dir "/music/排行榜" <url>         # Custom dir
 ```
+
+> **Credentials:** copy `config.example.json` to `config.json` and fill in your
+> Baidu app credentials (run `python upload_baidu.py --auth` to obtain tokens).
+> `config.json` holds live access/refresh tokens and is **gitignored** — never
+> commit it. If it was ever exposed, revoke & re-authorize.
 
 ## Supported Platforms
 
