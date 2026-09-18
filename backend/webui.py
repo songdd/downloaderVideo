@@ -648,6 +648,27 @@ def run_download(task_id, url, flags):
             TASKS[task_id]["downloaded"] = 1
             TASKS[task_id]["_updated"] = time.time()
             _save_tasks()
+        elif platform == "youku":
+            # Youku uses CDP mode (real Chrome) to grab the m3u8 stream, then
+            # downloads segments + merges with ffmpeg. A Chrome window may pop
+            # up briefly on this machine while capturing - that is expected.
+            from platforms import youku
+            result = youku.download(url, download_all=bool(flags.get("all")))
+            if not result:
+                TASKS[task_id]["status"] = "error"
+                TASKS[task_id]["output"] = "Youku download failed - refresh login (Login tab) and retry"
+                TASKS[task_id]["_updated"] = time.time()
+                _save_tasks()
+                return
+            if isinstance(result, str):
+                result = [result]
+            for fp in result:
+                if fp and fp not in TASKS[task_id]["files"]:
+                    TASKS[task_id]["files"].append(fp)
+            TASKS[task_id]["count"] = len(TASKS[task_id]["files"])
+            TASKS[task_id]["downloaded"] = len(TASKS[task_id]["files"])
+            TASKS[task_id]["_updated"] = time.time()
+            _save_tasks()
         else:
             TASKS[task_id]["status"] = "error"
             TASKS[task_id]["output"] = "Not supported in web UI: " + str(platform)

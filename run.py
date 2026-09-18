@@ -6,7 +6,7 @@ Usage: python run.py <share_link>
    or: python run.py
 """
 
-import os, sys, time
+import os, sys, time, re
 from task_tracker import TaskTracker
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -163,7 +163,7 @@ def _batch_download_from_file(filepath, batch_all=False, _tracker=None):
             elif platform == "tencent":
                 from platforms import tencent; result = tencent.download(url); _tracker.record_result(result) if _tracker else None
             elif platform == "youku":
-                from platforms import youku; result = youku.download(url); _tracker.record_result(result) if _tracker else None
+                from platforms import youku; result = youku.download(url, download_all=batch_all); _tracker.record_result(result) if _tracker else None
             elif platform == "ximalaya":
                 from platforms import xm
                 if "--login" in sys.argv:
@@ -200,6 +200,35 @@ def main():
         return
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print(HELP_TEXT)
+        return
+    # Direct m3u8 / mp4 stream download (bypasses site risk control):
+    #   python run.py --m3u8 "https://.../playlist.m3u8" [--name 标题]
+    # Grab the URL from your normal browser (F12 -> Network -> filter m3u8).
+    if len(sys.argv) > 1 and sys.argv[1] in ("--m3u8", "-m"):
+        from platforms.youku import download_m3u8, download_direct
+        import urllib.parse
+        try:
+            idx = sys.argv.index("--m3u8") if "--m3u8" in sys.argv else sys.argv.index("-m")
+            surl = sys.argv[idx + 1]
+        except (ValueError, IndexError):
+            print("Usage: python run.py --m3u8 <stream_url> [--name <title>]")
+            return
+        name = "stream"
+        if "--name" in sys.argv:
+            try: name = sys.argv[sys.argv.index("--name") + 1]
+            except (ValueError, IndexError): pass
+        import time as _t
+        safe = re.sub(r'[<>:"/\\|?*]', '_', name)[:50]
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        os.makedirs(out_dir, exist_ok=True)
+        if ".m3u8" in surl.lower():
+            fp = os.path.join(out_dir, "%s_%s.mp4" % (safe, _t.strftime("%Y%m%d_%H%M%S")))
+            result = download_m3u8(surl, fp)
+        else:
+            ext = ".mp4"
+            fp = os.path.join(out_dir, "%s_%s%s" % (safe, _t.strftime("%Y%m%d_%H%M%S"), ext))
+            result = download_direct(surl, fp)
+        print("\nSaved: %s" % result if result else "\nFailed")
         return
 
     # Task tracker for Baidu upload (created once, shared by all download paths)
@@ -284,7 +313,7 @@ def main():
         tencent.download(link)
     elif platform == "youku":
         from platforms import youku
-        youku.download(link)
+        youku.download(link, download_all=("--all" in sys.argv))
 
     elif platform == "ximalaya":
         from platforms import xm
